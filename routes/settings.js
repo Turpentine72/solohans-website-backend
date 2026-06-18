@@ -4,8 +4,27 @@ import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// ✅ GET settings – now protected (admin only)
-router.get('/', protect, async (req, res) => {
+// ✅ GET settings – public, but strips the Paystack secret key.
+// Used by the public site (business info, social links, bank transfer details).
+router.get('/', async (req, res) => {
+  try {
+    let settings = await Settings.findOne();
+    if (!settings) {
+      settings = await Settings.create({});
+    }
+    const safeSettings = settings.toObject();
+    if (safeSettings.payment) {
+      delete safeSettings.payment.paystackSecretKey;
+    }
+    res.json(safeSettings);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ✅ GET full settings (includes Paystack secret key) – admin only.
+// Used by the admin Settings page to populate the edit form.
+router.get('/admin', protect, async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) {

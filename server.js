@@ -21,21 +21,62 @@ import galleryRoutes from './routes/gallery.js';
 
 const app = express();
 
-// ─────────────────────────────────────────────────────────
-// Middleware
-// ─────────────────────────────────────────────────────────
+// ───────────────────────────────
+// Allowed Origins
+// ───────────────────────────────
+const allowedOrigins = [
+  'http://localhost:5173',
+
+  ...(process.env.CLIENT_URL || '')
+    .split(',')
+    .map((url) => url.trim())
+    .filter(Boolean),
+];
+
+// ───────────────────────────────
+// CORS (ONLY ONCE)
+// ───────────────────────────────
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || '*',
+    origin(origin, callback) {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      console.log('Blocked Origin:', origin);
+
+      return callback(
+        new Error(`Origin not allowed: ${origin}`)
+      );
+    },
+
     credentials: true,
+
+    methods: [
+      'GET',
+      'POST',
+      'PUT',
+      'PATCH',
+      'DELETE',
+      'OPTIONS',
+    ],
+
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+    ],
   })
 );
 
 app.use(express.json());
 
-// ─────────────────────────────────────────────────────────
+// ───────────────────────────────
 // Routes
-// ─────────────────────────────────────────────────────────
+// ───────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/menu-items', menuItemRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -52,9 +93,9 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/promos', promoRoutes);
 app.use('/api/gallery', galleryRoutes);
 
-// ─────────────────────────────────────────────────────────
+// ───────────────────────────────
 // Health Check
-// ─────────────────────────────────────────────────────────
+// ───────────────────────────────
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -62,9 +103,9 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// ─────────────────────────────────────────────────────────
-// Connect DB + Start Server
-// ─────────────────────────────────────────────────────────
+// ───────────────────────────────
+// Start Server
+// ───────────────────────────────
 const PORT = process.env.PORT || 5000;
 
 mongoose
@@ -73,7 +114,7 @@ mongoose
     console.log('✅ MongoDB connected');
 
     app.listen(PORT, () => {
-      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`🚀 Server running on ${PORT}`);
     });
   })
   .catch((err) => {
@@ -81,14 +122,14 @@ mongoose
     process.exit(1);
   });
 
-// ─────────────────────────────────────────────────────────
-// Global Error Handler
-// ─────────────────────────────────────────────────────────
+// ───────────────────────────────
+// Error Handler
+// ───────────────────────────────
 app.use((err, req, res, next) => {
   console.error(err);
 
   res.status(500).json({
     success: false,
-    message: 'Internal Server Error',
+    message: err.message || 'Internal Server Error',
   });
 });
