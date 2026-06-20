@@ -8,7 +8,7 @@ const orderSchema = new mongoose.Schema({
   address: { type: String, default: '' },
   items: { type: Array, required: true },
   delivery_method: { type: String, enum: ['delivery', 'pickup'], default: 'delivery' },
-  items_subtotal: { type: Number, required: true },   // items only, never includes delivery fee
+  items_subtotal: { type: Number, default: 0 },   // items only, never includes delivery fee
   totalAmount: { type: Number, required: true },      // final payable amount (items + delivery fee once set)
   delivery_fee: { type: Number, default: null },       // null = not yet set by admin
   delivery_fee_set: { type: Boolean, default: false }, // true once admin sets it (or immediately for pickup)
@@ -25,6 +25,13 @@ const orderSchema = new mongoose.Schema({
 
 // ✅ Auto‑generate order_id before saving (if not already set)
 orderSchema.pre('save', async function (next) {
+  // Backfill items_subtotal for orders created before this field existed —
+  // for those orders, totalAmount WAS the items-only amount (delivery fee
+  // used to be paid separately in cash), so this is a safe, accurate fill.
+  if (!this.items_subtotal && this.totalAmount) {
+    this.items_subtotal = this.totalAmount;
+  }
+
   if (this.isNew && !this.order_id) {
     const counter = await Counter.findByIdAndUpdate(
       'orderNumber',
