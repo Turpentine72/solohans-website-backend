@@ -7,12 +7,15 @@ const orderSchema = new mongoose.Schema({
   phone: { type: String, default: '' },
   address: { type: String, default: '' },
   items: { type: Array, required: true },
-  totalAmount: { type: Number, required: true },
+  delivery_method: { type: String, enum: ['delivery', 'pickup'], default: 'delivery' },
+  items_subtotal: { type: Number, required: true },   // items only, never includes delivery fee
+  totalAmount: { type: Number, required: true },      // final payable amount (items + delivery fee once set)
+  delivery_fee: { type: Number, default: null },       // null = not yet set by admin
+  delivery_fee_set: { type: Boolean, default: false }, // true once admin sets it (or immediately for pickup)
   status: { type: String, default: 'Pending' },
   payment_status: { type: String, default: 'unpaid' },
   paymentRef: { type: String, default: '' },
   order_type: { type: String, default: 'card' },
-  delivery_fee: { type: Number, default: 0 },
   freeDelivery: { type: Boolean, default: false },
   statusHistory: { type: Array, default: [] },
   order_id: { type: String, unique: true },            // will be auto‑generated

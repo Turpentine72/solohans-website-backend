@@ -39,6 +39,14 @@ router.post('/verify', async (req, res) => {
       return res.json({ success: true, alreadyPaid: true, order_id: order.order_id });
     }
 
+    // 3b. Delivery orders must have their fee set by admin before payment
+    if (order.delivery_method === 'delivery' && !order.delivery_fee_set) {
+      return res.status(400).json({
+        success: false,
+        message: 'Delivery fee has not been set yet for this order. Please wait for admin confirmation.',
+      });
+    }
+
     // 4. Mark paid in DB — single atomic update
     order.payment_status = 'paid';
     order.paymentRef     = reference;

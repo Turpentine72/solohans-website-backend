@@ -65,19 +65,22 @@ export async function sendNewOrderAlertToAdmin(order) {
     itemsHtml += '</ul>';
   }
 
+  const isPickup = order.delivery_method === 'pickup';
   const content = `
     <h2>📦 New Order Placed</h2>
     <p><strong>Order #:</strong> ${orderNum}</p>
     <p><strong>Customer:</strong> ${order.customerName || 'Guest'}</p>
     <p><strong>Phone:</strong> ${order.phone || 'N/A'}</p>
     <p><strong>Email:</strong> ${order.customerEmail || 'N/A'}</p>
-    <p><strong>Address:</strong> ${order.address || 'N/A'}</p>
-    <p><strong>Order Type:</strong> ${order.order_type || 'card'}</p>
-    <p><strong>Total Amount:</strong> ₦${Number(order.totalAmount).toLocaleString()}</p>
+    <p><strong>Delivery Method:</strong> ${isPickup ? '🏪 Pickup at restaurant' : '🚚 Delivery'}</p>
+    ${isPickup ? '' : `<p><strong>Delivery Address:</strong> ${order.address || 'N/A'}</p>`}
+    <p><strong>Items Total:</strong> ₦${Number(order.items_subtotal ?? order.totalAmount).toLocaleString()}</p>
     <p><strong>Items:</strong></p>
     ${itemsHtml}
-    <p style="margin-top:20px; color:#888;">This order is <strong>pending payment</strong>.</p>
-    <a href="${process.env.CLIENT_URL}/admin/orders" style="display:inline-block; margin-top:15px; background:#C62828; color:#fff; padding:10px 20px; border-radius:5px; text-decoration:none;">View in Admin</a>
+    ${isPickup
+      ? '<p style="margin-top:20px; color:#888;">No delivery fee needed – customer will pay the items total directly.</p>'
+      : '<p style="margin-top:20px; color:#C62828; font-weight:bold;">⚠️ Action required: set the delivery fee in the admin panel so the customer can complete payment.</p>'}
+    <a href="${(process.env.SITE_URL || "https://www.solohansdeliciousmeal.com.ng")}/admin/orders" style="display:inline-block; margin-top:15px; background:#C62828; color:#fff; padding:10px 20px; border-radius:5px; text-decoration:none;">View in Admin</a>
   `;
 
   const settings = await getSettings();
@@ -95,7 +98,7 @@ export async function sendPaymentAlertToAdmin(order) {
     <p><strong>Amount:</strong> ₦${Number(order.totalAmount).toLocaleString()}</p>
     <p><strong>Customer:</strong> ${order.customerName || 'N/A'}</p>
     <p><strong>Email:</strong> ${order.customerEmail}</p>
-    <a href="${process.env.CLIENT_URL}/admin/orders" style="display:inline-block; margin-top:15px; background:#C62828; color:#fff; padding:10px 20px; border-radius:5px; text-decoration:none;">View Order</a>
+    <a href="${(process.env.SITE_URL || "https://www.solohansdeliciousmeal.com.ng")}/admin/orders" style="display:inline-block; margin-top:15px; background:#C62828; color:#fff; padding:10px 20px; border-radius:5px; text-decoration:none;">View Order</a>
   `;
   const settings = await getSettings();
   const adminEmail = settings?.email || 'solohansdeliciousmeal80@gmail.com';
@@ -110,7 +113,7 @@ export async function sendNewReviewAlertToAdmin(review) {
     <p><strong>Customer:</strong> ${review.customer_name}</p>
     <p><strong>Rating:</strong> ${'⭐'.repeat(review.rating)}</p>
     <p><strong>Message:</strong> ${review.text}</p>
-    <a href="${process.env.CLIENT_URL}/admin/reviews" style="display:inline-block; margin-top:15px; background:#C62828; color:#fff; padding:10px 20px; border-radius:5px; text-decoration:none;">View in Admin</a>
+    <a href="${(process.env.SITE_URL || "https://www.solohansdeliciousmeal.com.ng")}/admin/reviews" style="display:inline-block; margin-top:15px; background:#C62828; color:#fff; padding:10px 20px; border-radius:5px; text-decoration:none;">View in Admin</a>
   `;
   const settings = await getSettings();
   const adminEmail = settings?.email || 'solohansdeliciousmeal80@gmail.com';
@@ -155,7 +158,7 @@ export async function sendContactAlertToAdmin(contact) {
     <p><strong>Email:</strong> ${contact.email}</p>
     <p><strong>Message:</strong></p>
     <p>${contact.message}</p>
-    <a href="${process.env.CLIENT_URL}/admin/contacts" style="display:inline-block; margin-top:15px; background:#C62828; color:#fff; padding:10px 20px; border-radius:5px; text-decoration:none;">Reply in Admin</a>
+    <a href="${(process.env.SITE_URL || "https://www.solohansdeliciousmeal.com.ng")}/admin/contacts" style="display:inline-block; margin-top:15px; background:#C62828; color:#fff; padding:10px 20px; border-radius:5px; text-decoration:none;">Reply in Admin</a>
   `;
   const settings = await getSettings();
   const adminEmail = settings?.email || 'solohansdeliciousmeal80@gmail.com';
@@ -215,12 +218,20 @@ export async function sendOrderStatusUpdate(order) {
 // ─── Delivery fee updated → client ──────────────────────────────────────────
 export async function sendDeliveryFeeUpdate(order, newDeliveryFee) {
   const orderNum = order.order_id || order._id.toString().slice(-6).toUpperCase();
-  const subject = `Delivery Fee Updated – Order #${orderNum}`;
+  const subject = `Action Required – Delivery Fee Set for Order #${orderNum}`;
+  const itemsTotal = Number(order.items_subtotal ?? order.totalAmount).toLocaleString();
+  const fee = Number(newDeliveryFee).toLocaleString();
+  const finalTotal = Number(order.totalAmount).toLocaleString();
+  const payUrl = `${(process.env.SITE_URL || "https://www.solohansdeliciousmeal.com.ng")}/complete-payment?order_id=${orderNum}&email=${encodeURIComponent(order.customerEmail)}`;
+
   const content = `
-    <h2>Delivery Fee Update</h2>
-    <p>Your order <strong>#${orderNum}</strong> now has a delivery fee of <strong>₦${Number(newDeliveryFee).toLocaleString()}</strong>.</p>
-    <p>This amount will be paid <strong>in cash</strong> directly to the rider when your order arrives.</p>
-    <p>Your food total remains unchanged.</p>
+    <h2>Your Delivery Fee Has Been Set</h2>
+    <p>Order <strong>#${orderNum}</strong> is ready for payment.</p>
+    <p><strong>Items Total:</strong> ₦${itemsTotal}</p>
+    <p><strong>Delivery Fee:</strong> ₦${fee}</p>
+    <p><strong>Final Amount Due:</strong> ₦${finalTotal}</p>
+    <a href="${payUrl}" style="display:inline-block; margin-top:15px; background:#C62828; color:#fff; padding:12px 24px; border-radius:5px; text-decoration:none; font-weight:bold;">Complete Payment Now</a>
+    <p style="margin-top:20px; color:#888;">Your order will be confirmed and prepared once payment is completed online.</p>
     <p>Thank you for choosing Solohans!</p>
   `;
 
