@@ -3,6 +3,8 @@
 import express from "express";
 import crypto from "crypto";
 import Order from "../models/Order.js"; // import your order model
+import { sendPaymentAlertToAdmin, sendOrderStatusUpdate } from "../utils/emailTemplates.js";
+import createNotification from "../utils/createNotification.js";
 
 const router = express.Router();
 
@@ -24,22 +26,47 @@ router.post("/", express.json(), async (req, res) => {
 
     // Payment successful
     if (event.event === "charge.success") {
-      const { metadata, amount, reference } = event.data;
+      const { metadata, reference } = event.data;
 
       if (metadata?.orderId) {
+        const order = await Order.findById(metadata.orderId);
 
-        // Update order
-        await Order.findByIdAndUpdate(
-          metadata.orderId,
-          {
-            status: "Paid",
-            paymentStatus: "Verified",
-            paymentReference: reference,
-            amountPaid: amount / 100
-          }
-        );
+        // ✅ Idempotent + non-destructive: only act the FIRST time a given
+        // order is confirmed paid. Paystack can resend this webhook (retries,
+        // duplicate delivery), and without this guard a delayed/duplicate
+        // event would silently snap order.status back to "Paid" even after
+        // an admin had already moved it to Processing / Out for Delivery /
+        // Delivered. Once payment_status is "paid", this webhook never
+        // touches the order again.
+        if (order && order.payment_status !== "paid") {
+          order.payment_status = "paid";
+          order.paymentRef = reference;
+          order.status = "Paid";
+          order.statusHistory = [
+            ...(order.statusHistory || []),
+            { status: "Paid", timestamp: new Date(), changedBy: "paystack_webhook" },
+          ];
+          await order.save();
 
-        console.log(`✅ Order ${metadata.orderId} updated`);
+          createNotification({
+            type: "payment_receipt",
+            message: `Payment received for order #${order.order_id}`,
+            relatedId: order._id,
+          }).catch(err => console.error("Notification error:", err));
+
+          sendPaymentAlertToAdmin(order).catch(err =>
+            console.error("Payment alert email error:", err)
+          );
+          sendOrderStatusUpdate(order).catch(err =>
+            console.error("Status update email error:", err)
+          );
+
+          console.log(`✅ Order ${order.order_id} marked paid via webhook`);
+        } else if (order) {
+          console.log(
+            `ℹ️ Webhook ignored — order ${order.order_id} already paid (current status: ${order.status})`
+          );
+        }
       }
     }
 

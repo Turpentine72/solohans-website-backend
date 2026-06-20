@@ -6,7 +6,7 @@ import getSettings from './getSettings.js';
 export async function sendBrandedEmail({ to, subject, content }) {
   const settings = await getSettings();
   const logo = settings?.logo || 'https://via.placeholder.com/150x50?text=Solohans';
-  const restaurantName = settings?.name || 'Solohans Delicious Meals';
+  const restaurantName = settings?.name || 'SOLOHANS DELICIOUS MEAL';
   const address = settings?.address || 'Adeniran Ogunsanya, Surulere, Lagos';
   const phone = settings?.phone || '+234 808 194 1298';
 
