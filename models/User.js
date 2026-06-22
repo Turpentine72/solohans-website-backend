@@ -4,6 +4,7 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String, required: true },
   role: { type: String, enum: ['admin'], default: 'admin' },
+  fcmTokens: { type: [String], default: [] }, // browser push notification tokens
 }, { timestamps: true });
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();

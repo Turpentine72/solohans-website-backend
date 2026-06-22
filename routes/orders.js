@@ -11,6 +11,7 @@ import createNotification from '../utils/createNotification.js';
 import Settings from '../models/Settings.js';
 import DeliveryZone from '../models/DeliveryZone.js';
 import { isWithinBusinessHours } from '../utils/businessHours.js';
+import { sendPushToAdmins } from '../utils/push.js';
 // ❌ removed: import getNextSequence from '../utils/getNextSequence.js';
 
 const router = express.Router();
@@ -110,6 +111,12 @@ router.post('/', async (req, res) => {
     sendNewOrderAlertToAdmin(order).catch(err =>
       console.error('New order admin email error:', err)
     );
+
+    sendPushToAdmins({
+      title: '🍽️ New Order Received',
+      body: `${order.customerName || 'Customer'} — ₦${Number(order.items_subtotal).toLocaleString()}`,
+      url: `/admin/orders`,
+    }).catch(err => console.error('Push notification error:', err));
 
     res.status(201).json(order);
   } catch (err) {

@@ -127,4 +127,17 @@ router.post('/verify-password', protect, async (req, res) => {
   }
 });
 
+// ─── Register a push-notification token for this admin's browser ────────────
+router.post('/fcm-token', protect, async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: 'Token is required' });
+
+    await User.findByIdAndUpdate(req.user.id, { $addToSet: { fcmTokens: token } });
+    res.json({ message: 'Token registered' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 export default router;
