@@ -12,6 +12,14 @@ const settingsSchema = new mongoose.Schema({
   mapUrl: { type: String, default: 'https://maps.google.com/maps?q=Adeniran%20Ogunsanya%20Street%2C%20Surulere%2C%20Lagos&output=embed' },
   workingHours: { type: String, default: 'Monday – Sunday<br />8:00 AM – 10:00 PM' },
 
+  // ✅ Structured business hours — used to actually enforce order blocking.
+  // (workingHours above is just the free-text display string shown on the site.)
+  businessHours: {
+    enabled: { type: Boolean, default: false },   // off by default until admin turns it on
+    openTime: { type: String, default: '08:00' },  // 24hr "HH:mm", Africa/Lagos
+    closeTime: { type: String, default: '22:00' }, // 24hr "HH:mm", Africa/Lagos
+  },
+
   // Social links
   social: {
     facebook: { type: String, default: 'https://www.facebook.com/SoloHansDelicious' },

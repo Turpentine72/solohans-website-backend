@@ -66,6 +66,7 @@ export async function sendNewOrderAlertToAdmin(order) {
   }
 
   const isPickup = order.delivery_method === 'pickup';
+  const feeAlreadyKnown = isPickup || order.delivery_fee_set;
   const content = `
     <h2>📦 New Order Placed</h2>
     <p><strong>Order #:</strong> ${orderNum}</p>
@@ -74,11 +75,12 @@ export async function sendNewOrderAlertToAdmin(order) {
     <p><strong>Email:</strong> ${order.customerEmail || 'N/A'}</p>
     <p><strong>Delivery Method:</strong> ${isPickup ? '🏪 Pickup at restaurant' : '🚚 Delivery'}</p>
     ${isPickup ? '' : `<p><strong>Delivery Address:</strong> ${order.address || 'N/A'}</p>`}
+    ${!isPickup && order.delivery_fee_set ? `<p><strong>Delivery Fee (zone-matched):</strong> ₦${Number(order.delivery_fee).toLocaleString()}</p>` : ''}
     <p><strong>Items Total:</strong> ₦${Number(order.items_subtotal ?? order.totalAmount).toLocaleString()}</p>
     <p><strong>Items:</strong></p>
     ${itemsHtml}
-    ${isPickup
-      ? '<p style="margin-top:20px; color:#888;">No delivery fee needed – customer will pay the items total directly.</p>'
+    ${feeAlreadyKnown
+      ? '<p style="margin-top:20px; color:#888;">No action needed – the fee is already set and the customer can pay immediately.</p>'
       : '<p style="margin-top:20px; color:#C62828; font-weight:bold;">⚠️ Action required: set the delivery fee in the admin panel so the customer can complete payment.</p>'}
     <a href="${(process.env.SITE_URL || "https://www.solohansdeliciousmeal.com.ng")}/admin/orders" style="display:inline-block; margin-top:15px; background:#C62828; color:#fff; padding:10px 20px; border-radius:5px; text-decoration:none;">View in Admin</a>
   `;

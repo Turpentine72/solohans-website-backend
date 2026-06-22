@@ -18,65 +18,42 @@ import paymentRoutes from './routes/payments.js';
 import adminRoutes from './routes/admin.js';
 import promoRoutes from './routes/promos.js';
 import galleryRoutes from './routes/gallery.js';
+import deliveryZoneRoutes from './routes/deliveryZones.js';
 
 const app = express();
 
-// ───────────────────────────────
-// Allowed Origins
-// ───────────────────────────────
+// ─────────────────────────────────────────────────────────
+// Middleware
+// ─────────────────────────────────────────────────────────
+// Comma-separated list of allowed frontend origins, e.g.
+// CLIENT_URL=https://project-2e90d.vercel.app,https://yourdomain.com
 const allowedOrigins = [
   'http://localhost:5173',
-
   ...(process.env.CLIENT_URL || '')
     .split(',')
-    .map((url) => url.trim())
+    .map((o) => o.trim())
     .filter(Boolean),
 ];
 
-// ───────────────────────────────
-// CORS (ONLY ONCE)
-// ───────────────────────────────
 app.use(
   cors({
-    origin(origin, callback) {
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      console.log('Blocked Origin:', origin);
-
-      return callback(
-        new Error(`Origin not allowed: ${origin}`)
-      );
+    origin: (origin, callback) => {
+      // Allow non-browser requests (curl, server-to-server, mobile apps)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Allow any Vercel preview/production deployment URL automatically
+      if (/\.vercel\.app$/.test(origin)) return callback(null, true);
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
     },
-
     credentials: true,
-
-    methods: [
-      'GET',
-      'POST',
-      'PUT',
-      'PATCH',
-      'DELETE',
-      'OPTIONS',
-    ],
-
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-    ],
   })
 );
 
 app.use(express.json());
 
-// ───────────────────────────────
+// ─────────────────────────────────────────────────────────
 // Routes
-// ───────────────────────────────
+// ─────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/menu-items', menuItemRoutes);
 app.use('/api/categories', categoryRoutes);
@@ -92,10 +69,11 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/promos', promoRoutes);
 app.use('/api/gallery', galleryRoutes);
+app.use('/api/delivery-zones', deliveryZoneRoutes);
 
-// ───────────────────────────────
+// ─────────────────────────────────────────────────────────
 // Health Check
-// ───────────────────────────────
+// ─────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
@@ -103,9 +81,9 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// ───────────────────────────────
-// Start Server
-// ───────────────────────────────
+// ─────────────────────────────────────────────────────────
+// Connect DB + Start Server
+// ─────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 
 mongoose
@@ -114,7 +92,7 @@ mongoose
     console.log('✅ MongoDB connected');
 
     app.listen(PORT, () => {
-      console.log(`🚀 Server running on ${PORT}`);
+      console.log(`🚀 Server running on port ${PORT}`);
     });
   })
   .catch((err) => {
@@ -122,14 +100,14 @@ mongoose
     process.exit(1);
   });
 
-// ───────────────────────────────
-// Error Handler
-// ───────────────────────────────
+// ─────────────────────────────────────────────────────────
+// Global Error Handler
+// ─────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error(err);
 
   res.status(500).json({
     success: false,
-    message: err.message || 'Internal Server Error',
+    message: 'Internal Server Error',
   });
 });
