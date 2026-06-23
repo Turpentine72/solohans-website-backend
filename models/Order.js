@@ -8,6 +8,8 @@ const orderSchema = new mongoose.Schema({
   address: { type: String, default: '' },
   items: { type: Array, required: true },
   delivery_method: { type: String, enum: ['delivery', 'pickup'], default: 'delivery' },
+  notes: { type: String, default: '' }, // customer's additional instructions for admin
+  order_channel: { type: String, enum: ['online', 'whatsapp'], default: 'online' },
   items_subtotal: { type: Number, default: 0 },   // items only, never includes delivery fee
   totalAmount: { type: Number, required: true },      // final payable amount (items + delivery fee once set)
   delivery_fee: { type: Number, default: null },       // null = not yet set by admin

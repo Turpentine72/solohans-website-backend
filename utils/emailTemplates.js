@@ -76,6 +76,7 @@ export async function sendNewOrderAlertToAdmin(order) {
     <p><strong>Delivery Method:</strong> ${isPickup ? '🏪 Pickup at restaurant' : '🚚 Delivery'}</p>
     ${isPickup ? '' : `<p><strong>Delivery Address:</strong> ${order.address || 'N/A'}</p>`}
     ${!isPickup && order.delivery_fee_set ? `<p><strong>Delivery Fee (zone-matched):</strong> ₦${Number(order.delivery_fee).toLocaleString()}</p>` : ''}
+    ${order.notes ? `<p><strong>📝 Customer Note:</strong> ${order.notes}</p>` : ''}
     <p><strong>Items Total:</strong> ₦${Number(order.items_subtotal ?? order.totalAmount).toLocaleString()}</p>
     <p><strong>Items:</strong></p>
     ${itemsHtml}
