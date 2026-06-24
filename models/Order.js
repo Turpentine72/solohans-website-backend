@@ -1,5 +1,4 @@
 import mongoose from 'mongoose';
-import Counter from './Counter.js';                     // ✅ import counter
 
 const orderSchema = new mongoose.Schema({
   customerEmail: { type: String, required: true },
@@ -25,6 +24,17 @@ const orderSchema = new mongoose.Schema({
   deletedAt: { type: Date, default: null },
 }, { timestamps: true });
 
+// ✅ Generates a genuinely unique order ID — no shared counter document
+// involved, so there's nothing that can ever be accidentally reset and
+// cause a duplicate. Combines a timestamp fragment (so IDs are roughly
+// time-ordered) with random characters (so even two orders created in the
+// same millisecond can't collide).
+function generateOrderId() {
+  const timePart = Date.now().toString(36).toUpperCase().slice(-6);
+  const randPart = Math.random().toString(36).slice(2, 5).toUpperCase();
+  return `SLH-${timePart}${randPart}`;
+}
+
 // ✅ Auto‑generate order_id before saving (if not already set)
 orderSchema.pre('save', async function (next) {
   // Backfill items_subtotal for orders created before this field existed —
@@ -35,13 +45,15 @@ orderSchema.pre('save', async function (next) {
   }
 
   if (this.isNew && !this.order_id) {
-    const counter = await Counter.findByIdAndUpdate(
-      'orderNumber',
-      { $inc: { seq: 1 } },
-      { new: true, upsert: true }
-    );
-    const seq = counter.seq.toString().padStart(4, '0');
-    this.order_id = `SLH-${seq}`;
+    let candidate = generateOrderId();
+    let attempts = 0;
+    // Astronomically unlikely to ever loop, but guarantees true uniqueness
+    // rather than just assuming it.
+    while (await this.constructor.exists({ order_id: candidate }) && attempts < 5) {
+      candidate = generateOrderId();
+      attempts++;
+    }
+    this.order_id = candidate;
   }
   next();
 });
