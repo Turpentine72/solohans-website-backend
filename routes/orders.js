@@ -125,23 +125,36 @@ router.post('/', async (req, res) => {
 });
 
 // ─── MARK AS PAID (public – called after Paystack) ────
-router.patch('/:id/mark-paid', async (req, res) => {
+// ─── ADMIN: MARK PAID (locks verification permanently) ──────────────
+router.patch('/:id/payment', protect, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
 
-    if (order.payment_status === 'paid') {
-      return res.status(400).json({ message: 'This order has already been paid' });
+    const targetStatus = req.body.payment_status === 'unpaid' ? 'unpaid' : 'paid';
+
+    if (targetStatus === 'unpaid') {
+      // 🔒 Cannot un-verify — once verified, payment can never be reverted.
+      if (order.verification_status === 'Verified') {
+        return res.status(400).json({ message: 'This order is already verified and cannot be marked unpaid again.' });
+      }
+      order.payment_status = 'unpaid';
+      await order.save();
+      return res.json(order);
     }
-    if (order.delivery_method === 'delivery' && !order.delivery_fee_set) {
-      return res.status(400).json({ message: 'Delivery fee has not been set yet for this order' });
+
+    if (order.payment_status === 'paid' && order.verification_status === 'Verified') {
+      return res.status(400).json({ message: 'This order has already been paid and verified.' });
     }
 
     order.payment_status = 'paid';
-    order.status = 'Paid';
+    order.verification_status = 'Verified'; // 🔒 permanent from this point on
+    order.statusHistory = [
+      ...(order.statusHistory || []),
+      { status: 'Paid & Verified', timestamp: new Date(), changedBy: req.user.email || req.user.id },
+    ];
     await order.save();
 
-    // Admin alert only – no customer email for payment confirmation
     sendPaymentAlertToAdmin(order).catch(err => console.error(err));
 
     createNotification({
@@ -207,19 +220,24 @@ router.patch('/:id/status', protect, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
-    if (order.status === 'Delivered') {
-      return res.status(400).json({ message: 'Delivered orders cannot be changed' });
+    if (order.status === 'Delivered' || order.status === 'Cancelled') {
+      return res.status(400).json({ message: `${order.status} orders cannot be changed` });
     }
 
     const newStatus = req.body.status;
     const currentStatus = order.status;
 
     const allowedTransitions = {
-      'Pending': [],
-      'Paid': ['Processing'],
-      'Processing': ['Out for Delivery'],
+      'Pending': ['Confirmed', 'Processing', 'Cancelled'],
+      'Confirmed': ['Processing', 'Cancelled'],
+      'Processing': ['Out for Delivery', 'Cancelled'],
       'Out for Delivery': ['Delivered'],
-      'Delivered': []
+      'Delivered': [],
+      'Cancelled': [],
+      // Legacy bridge — orders created before this restructure may still
+      // have "Paid" stored as a fulfillment stage (it's now a payment
+      // field instead). Treat it like Pending so old orders aren't stuck.
+      'Paid': ['Confirmed', 'Processing', 'Cancelled'],
     };
 
     if (!allowedTransitions[currentStatus]?.includes(newStatus)) {
@@ -237,8 +255,8 @@ router.patch('/:id/status', protect, async (req, res) => {
     order.status = newStatus;
     await order.save();
 
-    // Customer email only for these statuses
-    if (['Processing', 'Out for Delivery', 'Delivered'].includes(newStatus)) {
+    // Customer email for any real progress update
+    if (['Confirmed', 'Processing', 'Out for Delivery', 'Delivered', 'Cancelled'].includes(newStatus)) {
       sendOrderStatusUpdate(order).catch(err => console.error(err));
     }
 

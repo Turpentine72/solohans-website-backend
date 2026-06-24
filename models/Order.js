@@ -13,8 +13,9 @@ const orderSchema = new mongoose.Schema({
   totalAmount: { type: Number, required: true },      // final payable amount (items + delivery fee once set)
   delivery_fee: { type: Number, default: null },       // null = not yet set by admin
   delivery_fee_set: { type: Boolean, default: false }, // true once admin sets it (or immediately for pickup)
-  status: { type: String, default: 'Pending' },
-  payment_status: { type: String, default: 'unpaid' },
+  status: { type: String, default: 'Pending' }, // fulfillment stage only: Pending/Confirmed/Processing/Out for Delivery/Delivered/Cancelled
+  payment_status: { type: String, default: 'unpaid' }, // unpaid | paid
+  verification_status: { type: String, default: 'Not Verified' }, // Not Verified | Verified — LOCKS once Verified (see pre-save hook below)
   paymentRef: { type: String, default: '' },
   order_type: { type: String, default: 'card' },
   freeDelivery: { type: Boolean, default: false },
@@ -24,16 +25,32 @@ const orderSchema = new mongoose.Schema({
   deletedAt: { type: Date, default: null },
 }, { timestamps: true });
 
-// ✅ Generates a genuinely unique order ID — no shared counter document
-// involved, so there's nothing that can ever be accidentally reset and
-// cause a duplicate. Combines a timestamp fragment (so IDs are roughly
-// time-ordered) with random characters (so even two orders created in the
-// same millisecond can't collide).
+// ✅ Generates a genuinely unique, date-readable order ID — no shared
+// counter document involved, so there's nothing that can ever be
+// accidentally reset and cause a duplicate. Format: SLH-YYYYMMDD-XXXX
 function generateOrderId() {
-  const timePart = Date.now().toString(36).toUpperCase().slice(-6);
-  const randPart = Math.random().toString(36).slice(2, 5).toUpperCase();
-  return `SLH-${timePart}${randPart}`;
+  const now = new Date();
+  const datePart = now.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
+  const randPart = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `SLH-${datePart}-${randPart}`;
 }
+
+// 🔒 Once verification_status is "Verified", it can NEVER be changed back —
+// enforced here at the schema level so this holds true regardless of which
+// route or future code path tries to modify it.
+orderSchema.pre('save', async function (next) {
+  const touchesLockedFields = this.isModified('verification_status') || this.isModified('payment_status');
+  if (!this.isNew && touchesLockedFields) {
+    const existing = await this.constructor.findById(this._id).select('verification_status').lean();
+    if (existing?.verification_status === 'Verified') {
+      this.verification_status = 'Verified'; // cannot be undone
+      if (this.payment_status !== 'paid') {
+        this.payment_status = 'paid'; // can't be "verified" while "unpaid" — contradiction
+      }
+    }
+  }
+  next();
+});
 
 // ✅ Auto‑generate order_id before saving (if not already set)
 orderSchema.pre('save', async function (next) {

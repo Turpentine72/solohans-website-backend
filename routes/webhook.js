@@ -40,11 +40,11 @@ router.post("/", express.json(), async (req, res) => {
         // touches the order again.
         if (order && order.payment_status !== "paid") {
           order.payment_status = "paid";
+          order.verification_status = "Verified"; // locked permanently from here on
           order.paymentRef = reference;
-          order.status = "Paid";
           order.statusHistory = [
             ...(order.statusHistory || []),
-            { status: "Paid", timestamp: new Date(), changedBy: "paystack_webhook" },
+            { status: "Paid & Verified", timestamp: new Date(), changedBy: "paystack_webhook" },
           ];
           await order.save();
 

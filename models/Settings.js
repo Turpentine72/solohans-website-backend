@@ -20,6 +20,13 @@ const settingsSchema = new mongoose.Schema({
     closeTime: { type: String, default: '22:00' }, // 24hr "HH:mm", Africa/Lagos
   },
 
+  // ✅ Optional tax — off by default, doesn't change any existing pricing
+  // unless the admin explicitly turns it on.
+  tax: {
+    enabled: { type: Boolean, default: false },
+    rate: { type: Number, default: 0 }, // percentage, e.g. 7.5
+  },
+
   // Social links
   social: {
     facebook: { type: String, default: 'https://www.facebook.com/SoloHansDelicious' },
