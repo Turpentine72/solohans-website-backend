@@ -54,12 +54,16 @@ router.post("/", express.json(), async (req, res) => {
             relatedId: order._id,
           }).catch(err => console.error("Notification error:", err));
 
-          sendPaymentAlertToAdmin(order).catch(err =>
-            console.error("Payment alert email error:", err)
-          );
-          sendOrderStatusUpdate(order).catch(err =>
-            console.error("Status update email error:", err)
-          );
+          // ✅ Pickup orders stay silent on email here too — same reasoning
+          // as the /payments/verify route.
+          if (order.delivery_method !== 'pickup') {
+            sendPaymentAlertToAdmin(order).catch(err =>
+              console.error("Payment alert email error:", err)
+            );
+            sendOrderStatusUpdate(order).catch(err =>
+              console.error("Status update email error:", err)
+            );
+          }
 
           console.log(`✅ Order ${order.order_id} marked paid via webhook`);
         } else if (order) {

@@ -56,8 +56,13 @@ async function verifyAndMarkPaid({ reference, orderId }) {
     relatedId: order._id,
   }).catch(err => console.error('Notification error:', err));
 
-  sendPaymentAlertToAdmin(order).catch(err => console.error('Payment alert email error:', err));
-  sendOrderStatusUpdate(order).catch(err => console.error('Status update email error:', err));
+  // ✅ Pickup orders are explicitly silent on email — checkout completes
+  // quietly after payment, no admin alert, no customer email. Admin still
+  // sees it instantly via the in-app notification and push notification.
+  if (order.delivery_method !== 'pickup') {
+    sendPaymentAlertToAdmin(order).catch(err => console.error('Payment alert email error:', err));
+    sendOrderStatusUpdate(order).catch(err => console.error('Status update email error:', err));
+  }
 
   return { success: true, order_id: order.order_id };
 }

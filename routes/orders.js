@@ -90,7 +90,7 @@ router.post('/', async (req, res) => {
       address: delivery_method === 'delivery' ? req.body.address : '',
       items_subtotal: itemsSubtotal,
       totalAmount: itemsSubtotal + (zoneFee || 0),
-      delivery_fee: delivery_method === 'pickup' ? null : zoneFee,
+      delivery_fee: delivery_method === 'pickup' ? 0 : zoneFee,
       // Pickup, or a recognized zone with a known fee, can be paid immediately.
       // A custom/unlisted location still waits for admin to set a fee manually.
       delivery_fee_set: feeIsKnown,
@@ -108,9 +108,14 @@ router.post('/', async (req, res) => {
       relatedId: order._id,
     });
 
-    sendNewOrderAlertToAdmin(order).catch(err =>
-      console.error('New order admin email error:', err)
-    );
+    // ✅ Pickup orders are explicitly silent on email — admin still gets
+    // the in-app notification above and the push notification below,
+    // just no email for this fast, no-delivery-fee-coordination flow.
+    if (delivery_method !== 'pickup') {
+      sendNewOrderAlertToAdmin(order).catch(err =>
+        console.error('New order admin email error:', err)
+      );
+    }
 
     sendPushToAdmins({
       title: '🍽️ New Order Received',
@@ -220,14 +225,17 @@ router.patch('/:id/status', protect, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
-    if (order.status === 'Delivered' || order.status === 'Cancelled') {
+    if (['Delivered', 'Completed', 'Cancelled'].includes(order.status)) {
       return res.status(400).json({ message: `${order.status} orders cannot be changed` });
     }
 
     const newStatus = req.body.status;
     const currentStatus = order.status;
 
-    const allowedTransitions = {
+    // Pickup orders follow a different, simpler stage progression than
+    // delivery orders — there's no "Out for Delivery" leg, and it ends
+    // with "Completed" (picked up) instead of "Delivered".
+    const deliveryTransitions = {
       'Pending': ['Confirmed', 'Processing', 'Cancelled'],
       'Confirmed': ['Processing', 'Cancelled'],
       'Processing': ['Out for Delivery', 'Cancelled'],
@@ -239,6 +247,17 @@ router.patch('/:id/status', protect, async (req, res) => {
       // field instead). Treat it like Pending so old orders aren't stuck.
       'Paid': ['Confirmed', 'Processing', 'Cancelled'],
     };
+
+    const pickupTransitions = {
+      'Pending': ['Processing', 'Cancelled'],
+      'Processing': ['Ready for Pickup', 'Cancelled'],
+      'Ready for Pickup': ['Completed'],
+      'Completed': [],
+      'Cancelled': [],
+      'Paid': ['Processing', 'Cancelled'], // legacy bridge, same reasoning as above
+    };
+
+    const allowedTransitions = order.delivery_method === 'pickup' ? pickupTransitions : deliveryTransitions;
 
     if (!allowedTransitions[currentStatus]?.includes(newStatus)) {
       return res.status(400).json({ message: `Cannot move from ${currentStatus} to ${newStatus}` });
@@ -255,8 +274,9 @@ router.patch('/:id/status', protect, async (req, res) => {
     order.status = newStatus;
     await order.save();
 
-    // Customer email for any real progress update
-    if (['Confirmed', 'Processing', 'Out for Delivery', 'Delivered', 'Cancelled'].includes(newStatus)) {
+    // Customer email for any real progress update — except pickup orders,
+    // which are explicitly silent (no email at all, by design).
+    if (order.delivery_method !== 'pickup' && ['Confirmed', 'Processing', 'Out for Delivery', 'Delivered', 'Cancelled'].includes(newStatus)) {
       sendOrderStatusUpdate(order).catch(err => console.error(err));
     }
 
@@ -277,6 +297,10 @@ router.patch('/:id/delivery-fee', protect, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Not found' });
+
+    if (order.delivery_method === 'pickup') {
+      return res.status(400).json({ message: 'Pickup orders never have a delivery fee — nothing to set here.' });
+    }
 
     if (order.payment_status === 'paid') {
       return res.status(400).json({ message: 'Cannot change delivery fee after payment has been made' });
