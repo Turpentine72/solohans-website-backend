@@ -7,6 +7,7 @@ export async function sendBrandedEmail({ to, subject, content }) {
   const settings = await getSettings();
   const logo = settings?.logo || 'https://via.placeholder.com/150x50?text=Solohans';
   const restaurantName = settings?.name || 'SOLOHANS DELICIOUS MEAL';
+  const tagline = settings?.tagline || 'Delicious Meals';
   const address = settings?.address || 'Adeniran Ogunsanya, Surulere, Lagos';
   const phone = settings?.phone || '+234 808 194 1298';
 
@@ -24,6 +25,7 @@ export async function sendBrandedEmail({ to, subject, content }) {
             <td style="background:#C62828; padding:20px; text-align:center;">
               <img src="${logo}" alt="${restaurantName}" style="max-height:60px; margin-bottom:8px;" />
               <h1 style="color:#ffffff; margin:0; font-size:24px;">${restaurantName}</h1>
+              <p style="color:#ffffff; margin:4px 0 0; font-size:13px; opacity:0.9;">${tagline}</p>
             </td>
           </tr>
           <!-- Body -->
@@ -36,6 +38,7 @@ export async function sendBrandedEmail({ to, subject, content }) {
           <tr>
             <td style="background:#f9f9f9; padding:20px; text-align:center; font-size:12px; color:#666;">
               <p style="margin:0 0 5px;"><strong>${restaurantName}</strong></p>
+              <p style="margin:0 0 5px; color:#C62828;">${tagline}</p>
               <p style="margin:0 0 5px;">${address}</p>
               <p style="margin:0;">📞 ${phone}</p>
             </td>
