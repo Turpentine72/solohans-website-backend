@@ -8,5 +8,9 @@ const menuItemSchema = new mongoose.Schema({
   image: { type: String, default: '' },
   available: { type: Boolean, default: true },
   signature: { type: Boolean, default: false },
+  // ✅ Daily stock tracking — reset to 0 each day when a day is closed via reconciliation
+  openingStock: { type: Number, default: 0 },
+  sold: { type: Number, default: 0 },
+  remaining: { type: Number, default: 0 },
 }, { timestamps: true });
 export default mongoose.model('MenuItem', menuItemSchema);

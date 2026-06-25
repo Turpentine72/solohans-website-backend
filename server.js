@@ -19,6 +19,10 @@ import adminRoutes from './routes/admin.js';
 import promoRoutes from './routes/promos.js';
 import galleryRoutes from './routes/gallery.js';
 import deliveryZoneRoutes from './routes/deliveryZones.js';
+import staffRoutes from './routes/staff.js';
+import stockRoutes from './routes/stock.js';
+import reconciliationRoutes from './routes/reconciliation.js';
+import auditLogRoutes from './routes/auditLog.js';
 
 const app = express();
 
@@ -70,6 +74,10 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/promos', promoRoutes);
 app.use('/api/gallery', galleryRoutes);
 app.use('/api/delivery-zones', deliveryZoneRoutes);
+app.use('/api/staff', staffRoutes);
+app.use('/api/stock', stockRoutes);
+app.use('/api/reconciliation', reconciliationRoutes);
+app.use('/api/audit-logs', auditLogRoutes);
 
 // ─────────────────────────────────────────────────────────
 // Health Check

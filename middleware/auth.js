@@ -9,3 +9,12 @@ export const protect = (req, res, next) => {
     res.status(401).json({ message: 'Token invalid or expired' });
   }
 };
+
+// Usage: router.get('/', protect, requireRole('admin'), handler)
+// Must be used AFTER protect, since it relies on req.user being set.
+export const requireRole = (...allowedRoles) => (req, res, next) => {
+  if (!req.user?.role || !allowedRoles.includes(req.user.role)) {
+    return res.status(403).json({ message: 'You do not have permission to perform this action' });
+  }
+  next();
+};

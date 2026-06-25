@@ -94,6 +94,25 @@ export async function sendNewOrderAlertToAdmin(order) {
   await sendBrandedEmail({ to: adminEmail, subject, content });
 }
 
+// ─── Staff password changed → admin alert ───────────────────────────────────
+export async function sendPasswordChangeAlertToAdmin({ staffName, staffEmail }) {
+  const time = new Date().toLocaleString('en-NG', { timeZone: 'Africa/Lagos' });
+  const subject = `🔐 Staff Password Changed – ${staffName || staffEmail}`;
+  const content = `
+    <h2>Password Change Alert</h2>
+    <p>A staff member just changed their account password.</p>
+    <p><strong>Staff Name:</strong> ${staffName || 'N/A'}</p>
+    <p><strong>Email:</strong> ${staffEmail}</p>
+    <p><strong>Time of Change:</strong> ${time} (Africa/Lagos)</p>
+    <p><strong>Action Performed:</strong> Password changed</p>
+    <p style="margin-top:20px; color:#888;">If this wasn't expected, reset this staff member's password from the admin panel immediately.</p>
+  `;
+
+  const settings = await getSettings();
+  const adminEmail = settings?.email || 'solohansdeliciousmeal80@gmail.com';
+  await sendBrandedEmail({ to: adminEmail, subject, content });
+}
+
 // ─── Payment received → admin ───────────────────────────────────────────────
 export async function sendPaymentAlertToAdmin(order) {
   const orderNum = order.order_id || order._id.toString().slice(-6).toUpperCase();

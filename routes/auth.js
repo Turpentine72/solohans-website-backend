@@ -2,15 +2,19 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 import Otp from '../models/Otp.js';
-import { sendBrandedEmail } from '../utils/emailTemplates.js'; // ✅ branded emails
+import { sendBrandedEmail, sendPasswordChangeAlertToAdmin } from '../utils/emailTemplates.js'; // ✅ branded emails
+import { protect } from '../middleware/auth.js';
+import { logAudit } from '../utils/auditLog.js';
 
 const router = express.Router();
 
 // ─── Helper: sign JWT ────────────────────────────────────────────────────────
-const signToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  });
+const signToken = (user) =>
+  jwt.sign(
+    { id: user._id, email: user.email, name: user.name, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+  );
 
 // ─── Login ────────────────────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
@@ -21,8 +25,8 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
     res.json({
-      token: signToken(user._id),
-      user: { id: user._id, email: user.email, role: user.role },
+      token: signToken(user),
+      user: { id: user._id, email: user.email, name: user.name, role: user.role },
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -121,7 +125,51 @@ router.post('/reset-password', async (req, res) => {
     // Clean up OTPs for this email
     await Otp.deleteMany({ email: user.email });
 
+    // 🔔 Same admin alert + audit trail as the self-service change-password route
+    sendPasswordChangeAlertToAdmin({ staffName: user.name, staffEmail: user.email })
+      .catch(err => console.error('Password change alert email error:', err));
+
+    logAudit({
+      userId: user._id,
+      userEmail: user.email,
+      action: 'Password Reset (OTP)',
+      details: `${user.name || user.email} reset their password via the forgot-password flow`,
+    });
+
     res.json({ message: 'Password reset successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ─── Change Password (logged-in staff, self-service) ─────────────────────────
+router.post('/change-password', protect, async (req, res) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ message: 'Current and new password are required' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user || !(await user.comparePassword(currentPassword))) {
+      return res.status(401).json({ message: 'Current password is incorrect' });
+    }
+
+    user.password = newPassword; // pre-save hook hashes it
+    await user.save();
+
+    // 🔔 Admin alert + audit trail — never blocks the response if either fails
+    sendPasswordChangeAlertToAdmin({ staffName: user.name, staffEmail: user.email })
+      .catch(err => console.error('Password change alert email error:', err));
+
+    logAudit({
+      userId: user._id,
+      userEmail: user.email,
+      action: 'Password Changed',
+      details: `${user.name || user.email} changed their own password`,
+    });
+
+    res.json({ message: 'Password changed successfully' });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

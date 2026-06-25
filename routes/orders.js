@@ -1,6 +1,6 @@
 import express from 'express';
 import Order from '../models/Order.js';
-import { protect } from '../middleware/auth.js';
+import { protect, requireRole } from '../middleware/auth.js';
 import {
   sendOrderStatusUpdate,
   sendPaymentAlertToAdmin,
@@ -12,6 +12,7 @@ import Settings from '../models/Settings.js';
 import DeliveryZone from '../models/DeliveryZone.js';
 import { isWithinBusinessHours } from '../utils/businessHours.js';
 import { sendPushToAdmins } from '../utils/push.js';
+import { deductStockForOrder } from '../utils/stockDeduction.js';
 // ❌ removed: import getNextSequence from '../utils/getNextSequence.js';
 
 const router = express.Router();
@@ -131,7 +132,7 @@ router.post('/', async (req, res) => {
 
 // ─── MARK AS PAID (public – called after Paystack) ────
 // ─── ADMIN: MARK PAID (locks verification permanently) ──────────────
-router.patch('/:id/payment', protect, async (req, res) => {
+router.patch('/:id/payment', protect, requireRole('admin', 'cashier'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
@@ -221,7 +222,7 @@ router.get('/:id', protect, async (req, res) => {
 });
 
 // ─── ADMIN: UPDATE STATUS ───────────────────────────
-router.patch('/:id/status', protect, async (req, res) => {
+router.patch('/:id/status', protect, requireRole('admin', 'cashier'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
@@ -272,7 +273,20 @@ router.patch('/:id/status', protect, async (req, res) => {
     });
 
     order.status = newStatus;
+
+    // 📦 "Admin approves order → stock is automatically deducted." This is
+    // the FIRST time the order leaves Pending — guarded by stockDeducted so
+    // it can never happen twice even if status gets changed back and forth.
+    const isFirstApproval = (currentStatus === 'Pending' || currentStatus === 'Paid') && !order.stockDeducted;
+    if (isFirstApproval) {
+      order.stockDeducted = true;
+    }
+
     await order.save();
+
+    if (isFirstApproval) {
+      deductStockForOrder(order).catch(err => console.error('Stock deduction error:', err));
+    }
 
     // Customer email for any real progress update — except pickup orders,
     // which are explicitly silent (no email at all, by design).
@@ -293,7 +307,7 @@ router.patch('/:id/status', protect, async (req, res) => {
 });
 
 // ─── ADMIN: UPDATE DELIVERY FEE ─────────────────────
-router.patch('/:id/delivery-fee', protect, async (req, res) => {
+router.patch('/:id/delivery-fee', protect, requireRole('admin', 'cashier'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Not found' });
