@@ -222,7 +222,7 @@ router.get('/:id', protect, async (req, res) => {
 });
 
 // ─── ADMIN: UPDATE STATUS ───────────────────────────
-router.patch('/:id/status', protect, requireRole('admin', 'cashier'), async (req, res) => {
+router.patch('/:id/status', protect, requireRole('admin', 'cashier', 'chef', 'delivery_staff'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
@@ -262,6 +262,16 @@ router.patch('/:id/status', protect, requireRole('admin', 'cashier'), async (req
 
     if (!allowedTransitions[currentStatus]?.includes(newStatus)) {
       return res.status(400).json({ message: `Cannot move from ${currentStatus} to ${newStatus}` });
+    }
+
+    // 👨‍🍳 Chef can only move orders through kitchen prep stages — not
+    // confirm new orders, cancel, or mark final delivery/pickup completion.
+    if (req.user.role === 'chef' && !['Processing', 'Out for Delivery', 'Ready for Pickup'].includes(newStatus)) {
+      return res.status(403).json({ message: 'Chef can only update orders into kitchen prep stages' });
+    }
+    // 🚚 Delivery staff can only mark an order as Delivered — nothing else.
+    if (req.user.role === 'delivery_staff' && newStatus !== 'Delivered') {
+      return res.status(403).json({ message: 'Delivery staff can only mark orders as Delivered' });
     }
 
     order.statusHistory = order.statusHistory || [];
@@ -374,4 +384,4 @@ router.delete('/:id/permanent', protect, async (req, res) => {
   }
 });
 
-export default router;
+export default router;  

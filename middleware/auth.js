@@ -1,9 +1,22 @@
 import jwt from 'jsonwebtoken';
-export const protect = (req, res, next) => {
+import User from '../models/User.js';
+
+export const protect = async (req, res, next) => {
   const token = req.headers.authorization?.replace('Bearer ', '');
   if (!token) return res.status(401).json({ message: 'Unauthorized' });
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+
+    // 🔒 "Logout all active sessions" on password change — every token
+    // carries the tokenVersion it was issued under. If the user's current
+    // tokenVersion has moved on (changed password), this token is dead,
+    // even though it hasn't technically expired yet.
+    const user = await User.findById(payload.id).select('tokenVersion');
+    if (!user || user.tokenVersion !== payload.tokenVersion) {
+      return res.status(401).json({ message: 'Session expired — please log in again' });
+    }
+
+    req.user = payload;
     next();
   } catch {
     res.status(401).json({ message: 'Token invalid or expired' });

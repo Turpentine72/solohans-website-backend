@@ -6,17 +6,35 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: {
     type: String,
-    enum: ['admin', 'cashier', 'storekeeper', 'closing_staff'],
+    enum: ['admin', 'cashier', 'storekeeper', 'closing_staff', 'chef', 'delivery_staff'],
     default: 'admin',
   },
+  passwordHistory: { type: [String], default: [] }, // last few hashed passwords — prevents reuse
+  tokenVersion: { type: Number, default: 0 }, // bump on password change to invalidate old JWTs ("logout all sessions")
   fcmTokens: { type: [String], default: [] }, // browser push notification tokens
 }, { timestamps: true });
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
+  // Keep the last 5 hashed passwords so we can block reuse going forward.
+  if (!this.isNew && this.password) {
+    // `this.password` here is still the OLD plain value being replaced —
+    // but bcrypt comparison needs the hash, so we push the CURRENT (pre-hash)
+    // doc's stored hash, fetched fresh, into history before overwriting.
+    const existing = await this.constructor.findById(this._id).select('password').lean();
+    if (existing?.password) {
+      this.passwordHistory = [existing.password, ...(this.passwordHistory || [])].slice(0, 5);
+    }
+  }
   this.password = await bcrypt.hash(this.password, 12);
   next();
 });
 userSchema.methods.comparePassword = function (plain) {
   return bcrypt.compare(plain, this.password);
+};
+userSchema.methods.wasPreviouslyUsed = async function (plain) {
+  for (const oldHash of this.passwordHistory || []) {
+    if (await bcrypt.compare(plain, oldHash)) return true;
+  }
+  return false;
 };
 export default mongoose.model('User', userSchema);

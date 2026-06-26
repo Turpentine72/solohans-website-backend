@@ -33,7 +33,7 @@ router.post('/', async (req, res) => {
       name: name || '',
       email,
       password,
-      role: ['admin', 'cashier', 'storekeeper', 'closing_staff'].includes(role) ? role : 'cashier',
+      role: ['admin', 'cashier', 'storekeeper', 'closing_staff', 'chef', 'delivery_staff'].includes(role) ? role : 'cashier',
     });
 
     logAudit({
@@ -53,7 +53,7 @@ router.post('/', async (req, res) => {
 router.patch('/:id/role', async (req, res) => {
   try {
     const { role } = req.body;
-    if (!['admin', 'cashier', 'storekeeper', 'closing_staff'].includes(role)) {
+    if (!['admin', 'cashier', 'storekeeper', 'closing_staff', 'chef', 'delivery_staff'].includes(role)) {
       return res.status(400).json({ message: 'Invalid role' });
     }
     const user = await User.findById(req.params.id);
