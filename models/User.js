@@ -6,8 +6,11 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: {
     type: String,
-    enum: ['admin', 'cashier', 'storekeeper', 'closing_staff', 'chef', 'delivery_staff'],
     default: 'admin',
+    // ✅ No longer a strict enum — admin can create custom roles via the
+    // Roles system (see models/Role.js). Validity is checked against the
+    // Role collection in routes/staff.js when a staff account is created
+    // or its role is changed.
   },
   passwordHistory: { type: [String], default: [] }, // last few hashed passwords — prevents reuse
   tokenVersion: { type: Number, default: 0 }, // bump on password change to invalidate old JWTs ("logout all sessions")

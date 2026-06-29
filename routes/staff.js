@@ -1,5 +1,6 @@
 import express from 'express';
 import User from '../models/User.js';
+import Role from '../models/Role.js';
 import { protect, requireRole } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
 import { sendPasswordChangeAlertToAdmin } from '../utils/emailTemplates.js';
@@ -29,11 +30,19 @@ router.post('/', async (req, res) => {
     const existing = await User.findOne({ email: email.toLowerCase().trim() });
     if (existing) return res.status(400).json({ message: 'A staff account with this email already exists' });
 
+    // ✅ Role must be one that actually exists (built-in or admin-created
+    // custom role) — no more silently falling back to "cashier" if the
+    // submitted value wasn't recognized.
+    const roleDoc = await Role.findOne({ name: role });
+    if (!roleDoc) {
+      return res.status(400).json({ message: 'Please choose a valid role' });
+    }
+
     const user = await User.create({
       name: name || '',
       email,
       password,
-      role: ['admin', 'cashier', 'storekeeper', 'closing_staff', 'chef', 'delivery_staff'].includes(role) ? role : 'cashier',
+      role: roleDoc.name,
     });
 
     logAudit({
@@ -49,12 +58,42 @@ router.post('/', async (req, res) => {
   }
 });
 
+// ─── Update a staff member's name and/or email ────────────────────────────
+router.patch('/:id', async (req, res) => {
+  try {
+    const { name, email } = req.body;
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'Staff not found' });
+
+    if (email && email.toLowerCase().trim() !== user.email) {
+      const existing = await User.findOne({ email: email.toLowerCase().trim() });
+      if (existing) return res.status(400).json({ message: 'Another staff account already uses this email' });
+      user.email = email.toLowerCase().trim();
+    }
+    if (name !== undefined) user.name = name;
+
+    await user.save();
+
+    logAudit({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      action: 'Staff Details Updated',
+      details: `Updated name/email for ${user.email}`,
+    });
+
+    res.json({ id: user._id, name: user.name, email: user.email, role: user.role });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
 // ─── Change a staff member's role ─────────────────────────────────────────
 router.patch('/:id/role', async (req, res) => {
   try {
     const { role } = req.body;
-    if (!['admin', 'cashier', 'storekeeper', 'closing_staff', 'chef', 'delivery_staff'].includes(role)) {
-      return res.status(400).json({ message: 'Invalid role' });
+    const roleDoc = await Role.findOne({ name: role });
+    if (!roleDoc) {
+      return res.status(400).json({ message: 'Please choose a valid role' });
     }
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'Staff not found' });
