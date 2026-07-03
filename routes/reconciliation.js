@@ -1,94 +1,91 @@
-// backend/routes/reconciliation.js
 import express from 'express';
-import mongoose from 'mongoose';
-import { protect } from '../middleware/auth.js';
-import Order from '../models/Order.js';
-
-const dailyCloseSchema = new mongoose.Schema({
-  date: { type: String, required: true, unique: true }, // YYYY-MM-DD
-  expected: {
-    cashTotal: Number, transferTotal: Number, posTotal: Number, websitePaymentTotal: Number, totalSales: Number,
-  },
-  actual: {
-    cashTotal: Number, transferTotal: Number, posTotal: Number, websitePaymentTotal: Number,
-  },
-  variance: {
-    cashTotal: Number, transferTotal: Number, posTotal: Number, websitePaymentTotal: Number,
-  },
-  closedBy: { type: String, default: '' },
-}, { timestamps: true });
-
-const DailyClose = mongoose.models.DailyClose || mongoose.model('DailyClose', dailyCloseSchema);
+import MenuItem from '../models/MenuItem.js';
+import DailyStock from '../models/DailyStock.js';
+import Reconciliation from '../models/Reconciliation.js';
+import { protect, requireRole } from '../middleware/auth.js';
+import { logAudit } from '../utils/auditLog.js';
+import { getOrCreateTodayStock } from '../utils/stockDeduction.js';
 
 const router = express.Router();
 
-function todayKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+// admin + closing_staff can perform end-of-day reconciliation
+router.use(protect, requireRole('admin', 'closing_staff'));
 
-async function expectedTotalsForToday() {
-  const since = new Date();
-  since.setHours(0, 0, 0, 0);
-  const orders = await Order.find({ isDeleted: false, payment_status: 'paid', createdAt: { $gte: since } });
-
-  const expected = { cashTotal: 0, transferTotal: 0, posTotal: 0, websitePaymentTotal: 0 };
-  orders.forEach((o) => {
-    if (o.paymentMethod === 'CASH') expected.cashTotal += o.totalAmount || 0;
-    else if (o.paymentMethod === 'TRANSFER') expected.transferTotal += o.totalAmount || 0;
-    else if (o.paymentMethod === 'POS') expected.posTotal += o.totalAmount || 0;
-    else if (o.paymentMethod === 'WEBSITE PAYMENT') expected.websitePaymentTotal += o.totalAmount || 0;
-  });
-  expected.totalSales = expected.cashTotal + expected.transferTotal + expected.posTotal + expected.websitePaymentTotal;
-  return expected;
-}
-
-// ─── GET expected totals for today (compare against physical cash / POS account / bank / Paystack) ──
-router.get('/expected', protect, async (req, res) => {
+// ─── GET expected stock for today (what the system thinks remains) ───────
+router.get('/expected', async (req, res) => {
   try {
-    const expected = await expectedTotalsForToday();
-    const existing = await DailyClose.findOne({ date: todayKey() });
-    res.json({ date: todayKey(), expected, isClosed: !!existing, closedRecord: existing || null });
+    const stock = await getOrCreateTodayStock();
+    res.json(stock);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// ─── POST close the day with staff-counted actual amounts ────────
-router.post('/close-day', protect, async (req, res) => {
+// ─── Close the day: compare actual counts vs expected, lock, reset ────────
+router.post('/close-day', async (req, res) => {
   try {
-    const date = todayKey();
-    const existing = await DailyClose.findOne({ date });
-    if (existing) return res.status(400).json({ message: 'Today has already been reconciled and closed.' });
+    const { actualCounts } = req.body; // [{ menuItemId, actual }]
+    if (!Array.isArray(actualCounts)) {
+      return res.status(400).json({ message: 'actualCounts array is required' });
+    }
 
-    const expected = await expectedTotalsForToday();
-    const actual = {
-      cashTotal: Number(req.body.actualCounts?.cashTotal) || 0,
-      transferTotal: Number(req.body.actualCounts?.transferTotal) || 0,
-      posTotal: Number(req.body.actualCounts?.posTotal) || 0,
-      websitePaymentTotal: Number(req.body.actualCounts?.websitePaymentTotal) || 0,
-    };
-    const variance = {
-      cashTotal: actual.cashTotal - expected.cashTotal,
-      transferTotal: actual.transferTotal - expected.transferTotal,
-      posTotal: actual.posTotal - expected.posTotal,
-      websitePaymentTotal: actual.websitePaymentTotal - expected.websitePaymentTotal,
-    };
+    const todayStock = await getOrCreateTodayStock();
+    if (todayStock.isClosed) {
+      return res.status(400).json({ message: 'Today has already been closed' });
+    }
 
-    const record = await DailyClose.create({
-      date, expected, actual, variance, closedBy: req.user?.email || 'admin',
+    const items = [];
+    let hasMismatch = false;
+
+    for (const stockEntry of todayStock.items) {
+      const submitted = actualCounts.find(
+        a => String(a.menuItemId) === String(stockEntry.menuItem)
+      );
+      const expected = stockEntry.remaining;
+      const actual = submitted ? Number(submitted.actual) || 0 : 0;
+      const difference = actual - expected;
+      if (difference !== 0) hasMismatch = true;
+
+      items.push({
+        menuItem: stockEntry.menuItem,
+        name: stockEntry.name,
+        expectedStock: expected,
+        actualStock: actual,
+        difference,
+      });
+    }
+
+    const reconciliation = await Reconciliation.create({
+      date: new Date(),
+      items,
+      status: hasMismatch ? 'Mismatch' : 'Verified',
+      closedBy: req.user.id,
     });
 
-    res.status(201).json(record);
+    // Lock today's stock
+    todayStock.isClosed = true;
+    await todayStock.save();
+
+    // ✅ New day starts fresh — reset every menu item's stock counters
+    await MenuItem.updateMany({}, { openingStock: 0, sold: 0, remaining: 0 });
+
+    logAudit({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      action: 'Day Closed',
+      details: `Closed day with status "${reconciliation.status}" — ${items.length} item(s) reconciled`,
+    });
+
+    res.json(reconciliation);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
 });
 
-// ─── GET reconciliation history ──────────────────────────────────
-router.get('/history', protect, async (req, res) => {
+// ─── History of past reconciliations ──────────────────────────────────────
+router.get('/history', async (req, res) => {
   try {
-    const records = await DailyClose.find().sort({ date: -1 }).limit(90);
+    const records = await Reconciliation.find().sort('-date').limit(60);
     res.json(records);
   } catch (err) {
     res.status(500).json({ message: err.message });
