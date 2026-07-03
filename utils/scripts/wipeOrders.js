@@ -1,8 +1,8 @@
 import dotenv from 'dotenv';
 dotenv.config();
 import mongoose from 'mongoose';
-import Order from '../models/Order.js';
-import Counter from '../models/Counter.js';
+import Order from '../../models/Order.js';
+import Counter from '../../models/Counter.js';
 
 mongoose.connect(process.env.MONGO_URI)
   .then(async () => {
