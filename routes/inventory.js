@@ -1,11 +1,12 @@
 // backend/routes/inventory.js
 import express from 'express';
-import { protect } from '../middleware/auth.js';
+import { protect, requireRole } from '../middleware/auth.js';
 import Inventory from '../models/Inventory.js';
 import StockMovement from '../models/StockMovement.js';
 import { restock, inventorySnapshot, StockError } from '../utils/stockEngine.js';
 
 const router = express.Router();
+router.use(protect, requireRole('admin', 'storekeeper', 'cashier'));
 
 // ─── GET current inventory snapshot ─────────────────────────────
 router.get('/', protect, async (req, res) => {

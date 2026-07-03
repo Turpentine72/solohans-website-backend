@@ -1,11 +1,12 @@
 // backend/routes/dashboard.js
 import express from 'express';
-import { protect } from '../middleware/auth.js';
+import { protect, requireRole } from '../middleware/auth.js';
 import Order from '../models/Order.js';
 import Inventory from '../models/Inventory.js';
 import { inventorySnapshot } from '../utils/stockEngine.js';
 
 const router = express.Router();
+router.use(protect, requireRole('admin', 'storekeeper', 'cashier'));
 
 function rangeStart(period) {
   const now = new Date();

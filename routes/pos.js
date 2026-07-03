@@ -1,17 +1,18 @@
 // backend/routes/pos.js
 import express from 'express';
-import { protect } from '../middleware/auth.js';
+import { protect, requireRole } from '../middleware/auth.js';
 import { createOrderFromCheckout, CheckoutError } from '../utils/checkout.js';
-import { priceOrder, PricingError, DEFAULT_EXTRAS_CATALOG } from '../utils/pricing.js';
+import { priceOrder, PricingError } from '../utils/pricing.js';
 import { assertStockAvailable, StockError } from '../utils/stockEngine.js';
 import Inventory from '../models/Inventory.js';
 import createNotification from '../utils/createNotification.js';
 
 const router = express.Router();
 
+router.use(protect, requireRole('admin', 'storekeeper', 'cashier'));
+
 // ─── LIVE PRICE PREVIEW (no stock mutation) ──────────────────────
-// Lets the POS screen show a running total as staff builds the order.
-router.post('/quote', protect, async (req, res) => {
+router.post('/quote', async (req, res) => {
   try {
     const inv = await Inventory.getSingleton();
     const extrasCatalog = {};
@@ -35,8 +36,8 @@ router.post('/quote', protect, async (req, res) => {
 });
 
 // ─── COMPLETE SALE (store checkout) ──────────────────────────────
-// body: { cart: { mealPackages, extras, deliveryFee }, paymentMethod, customerName, staffName }
-router.post('/checkout', protect, async (req, res) => {
+// body: { cart: { mealPackages, extras }, paymentMethod, customerName, phone }
+router.post('/checkout', async (req, res) => {
   try {
     const { cart, paymentMethod, customerName, phone } = req.body;
     const staffName = req.body.staffName || req.user?.email || 'Staff';
@@ -48,14 +49,14 @@ router.post('/checkout', protect, async (req, res) => {
       staffName,
       customerName,
       phone,
-      markPaidImmediately: true,
+      deliveryMethod: 'pickup', // in-store sale — no delivery zone involved
     });
 
     createNotification({
       type: 'new_order',
       message: `Store sale #${order.order_id} — ₦${order.totalAmount.toLocaleString()} (${paymentTag})`,
       relatedId: order._id,
-    }).catch(() => {});
+    });
 
     res.status(201).json({ order, paymentTag });
   } catch (err) {

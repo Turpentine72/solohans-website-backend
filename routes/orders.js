@@ -1,12 +1,18 @@
 import express from 'express';
 import Order from '../models/Order.js';
-import { protect } from '../middleware/auth.js';
+import { protect, requireRole } from '../middleware/auth.js';
 import {
   sendOrderStatusUpdate,
   sendPaymentAlertToAdmin,
-  sendDeliveryFeeUpdate
+  sendDeliveryFeeUpdate,
+  sendNewOrderAlertToAdmin
 } from '../utils/emailTemplates.js';
 import createNotification from '../utils/createNotification.js';
+import Settings from '../models/Settings.js';
+import DeliveryZone from '../models/DeliveryZone.js';
+import { isWithinBusinessHours } from '../utils/businessHours.js';
+import { sendPushToAdmins } from '../utils/push.js';
+import { deductStockForOrder } from '../utils/stockDeduction.js';
 import { createOrderFromCheckout, CheckoutError } from '../utils/checkout.js';
 import { PricingError } from '../utils/pricing.js';
 import { StockError } from '../utils/stockEngine.js';
@@ -14,12 +20,24 @@ import { StockError } from '../utils/stockEngine.js';
 
 const router = express.Router();
 
-// ─── CREATE WEBSITE MEAL ORDER (new combo builder) ───────────────
-// body: { cart: { mealPackages, extras, deliveryFee }, customerName, customerEmail, phone, address }
-// Always tagged source='website', paymentMethod='WEBSITE PAYMENT'.
+// ─── CREATE WEBSITE MEAL-COMBO ORDER (Jollof/Fried Rice/Spaghetti builder) ──
+// This is SEPARATE from the generic POST '/' route above (used by the
+// existing menu/cart system). It shares the same Order model and the same
+// delivery-zone fee resolution pattern, but deducts from the new shared
+// Inventory (rice scoops / spaghetti plastics / lunch boxes) instead of
+// per-MenuItem stock. Always tagged source='website', paymentMethod='WEBSITE PAYMENT'.
+// body: { cart: { mealPackages, extras }, customerName, customerEmail, phone,
+//         address, deliveryMethod, deliveryZoneId, notes }
 router.post('/checkout', async (req, res) => {
   try {
-    const { cart, customerName, customerEmail, phone, address } = req.body;
+    const settings = await Settings.findOne();
+    if (settings && !isWithinBusinessHours(settings)) {
+      return res.status(403).json({
+        message: 'We are currently closed. Orders can only be placed between opening and closing hours.',
+      });
+    }
+
+    const { cart, customerName, customerEmail, phone, address, deliveryMethod, deliveryZoneId, notes } = req.body;
     if (!customerEmail) return res.status(400).json({ message: 'Email is required' });
 
     const { order, paymentTag } = await createOrderFromCheckout({
@@ -30,21 +48,29 @@ router.post('/checkout', async (req, res) => {
       customerEmail,
       phone,
       address,
-      markPaidImmediately: false, // stays 'Pending'/'unpaid' until Paystack verifies
+      deliveryMethod,
+      deliveryZoneId,
+      notes,
     });
 
     createNotification({
       type: 'new_order',
       message: `New website order #${order.order_id} from ${customerName || 'Customer'} (${paymentTag})`,
       relatedId: order._id,
-    }).catch(() => {});
+    });
+
+    sendPushToAdmins({
+      title: '🍽️ New Meal Order',
+      body: `${customerName || 'Customer'} — ₦${Number(order.items_subtotal).toLocaleString()}`,
+      url: `/admin/orders`,
+    }).catch((err) => console.error('Push notification error:', err));
 
     res.status(201).json({ order, paymentTag });
   } catch (err) {
     if (err instanceof CheckoutError || err instanceof PricingError || err instanceof StockError) {
       return res.status(400).json({ message: err.message });
     }
-    console.error('Website checkout error:', err);
+    console.error('Website meal checkout error:', err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -90,9 +116,43 @@ router.get('/track', async (req, res) => {
 // ─── CREATE ORDER (public) ───────────────────────────
 router.post('/', async (req, res) => {
   try {
+    const settings = await Settings.findOne();
+    if (settings && !isWithinBusinessHours(settings)) {
+      return res.status(403).json({
+        message: 'We are currently closed. Orders can only be placed between opening and closing hours.',
+      });
+    }
+
+    const delivery_method = req.body.delivery_method === 'pickup' ? 'pickup' : 'delivery';
+
+    if (delivery_method === 'delivery' && !req.body.address?.trim()) {
+      return res.status(400).json({ message: 'Delivery address is required for delivery orders' });
+    }
+
+    const itemsSubtotal = Number(req.body.totalAmount) || 0;
+
+    // If the customer picked a delivery zone, look up its fee SERVER-SIDE
+    // (never trust a fee value sent directly from the browser) and apply it
+    // immediately so they can pay right away, same as pickup.
+    let zoneFee = null;
+    if (delivery_method === 'delivery' && req.body.delivery_zone_id) {
+      const zone = await DeliveryZone.findOne({ _id: req.body.delivery_zone_id, active: true });
+      if (zone) zoneFee = zone.fee;
+    }
+
+    const feeIsKnown = delivery_method === 'pickup' || zoneFee !== null;
+
     // ✅ No longer manually create order_id – the pre‑save hook in Order.js does it
     const orderData = {
       ...req.body,
+      delivery_method,
+      address: delivery_method === 'delivery' ? req.body.address : '',
+      items_subtotal: itemsSubtotal,
+      totalAmount: itemsSubtotal + (zoneFee || 0),
+      delivery_fee: delivery_method === 'pickup' ? 0 : zoneFee,
+      // Pickup, or a recognized zone with a known fee, can be paid immediately.
+      // A custom/unlisted location still waits for admin to set a fee manually.
+      delivery_fee_set: feeIsKnown,
       status: 'Pending',
       payment_status: 'unpaid',
       // order_id is NOT set here – will be auto‑generated by the model
@@ -107,6 +167,21 @@ router.post('/', async (req, res) => {
       relatedId: order._id,
     });
 
+    // ✅ Pickup orders are explicitly silent on email — admin still gets
+    // the in-app notification above and the push notification below,
+    // just no email for this fast, no-delivery-fee-coordination flow.
+    if (delivery_method !== 'pickup') {
+      sendNewOrderAlertToAdmin(order).catch(err =>
+        console.error('New order admin email error:', err)
+      );
+    }
+
+    sendPushToAdmins({
+      title: '🍽️ New Order Received',
+      body: `${order.customerName || 'Customer'} — ₦${Number(order.items_subtotal).toLocaleString()}`,
+      url: `/admin/orders`,
+    }).catch(err => console.error('Push notification error:', err));
+
     res.status(201).json(order);
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -114,15 +189,36 @@ router.post('/', async (req, res) => {
 });
 
 // ─── MARK AS PAID (public – called after Paystack) ────
-router.patch('/:id/mark-paid', async (req, res) => {
+// ─── ADMIN: MARK PAID (locks verification permanently) ──────────────
+router.patch('/:id/payment', protect, requireRole('admin', 'cashier'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    const targetStatus = req.body.payment_status === 'unpaid' ? 'unpaid' : 'paid';
+
+    if (targetStatus === 'unpaid') {
+      // 🔒 Cannot un-verify — once verified, payment can never be reverted.
+      if (order.verification_status === 'Verified') {
+        return res.status(400).json({ message: 'This order is already verified and cannot be marked unpaid again.' });
+      }
+      order.payment_status = 'unpaid';
+      await order.save();
+      return res.json(order);
+    }
+
+    if (order.payment_status === 'paid' && order.verification_status === 'Verified') {
+      return res.status(400).json({ message: 'This order has already been paid and verified.' });
+    }
+
     order.payment_status = 'paid';
-    order.status = 'Paid';
+    order.verification_status = 'Verified'; // 🔒 permanent from this point on
+    order.statusHistory = [
+      ...(order.statusHistory || []),
+      { status: 'Paid & Verified', timestamp: new Date(), changedBy: req.user.email || req.user.id },
+    ];
     await order.save();
 
-    // Admin alert only – no customer email for payment confirmation
     sendPaymentAlertToAdmin(order).catch(err => console.error(err));
 
     createNotification({
@@ -134,6 +230,29 @@ router.patch('/:id/mark-paid', async (req, res) => {
     res.json(order);
   } catch (err) {
     res.status(400).json({ message: err.message });
+  }
+});
+
+// ─── PUBLIC: GET PAYMENT INFO (for the Complete Payment page) ─────────
+router.get('/payment-info', async (req, res) => {
+  try {
+    const { order_id, email } = req.query;
+    if (!order_id || !email) {
+      return res.status(400).json({ message: 'Order ID and email are required' });
+    }
+    const order = await Order.findOne({
+      order_id: order_id.toUpperCase(),
+      customerEmail: email.toLowerCase().trim(),
+      isDeleted: false,
+    }).select(
+      '_id order_id customerName customerEmail items items_subtotal delivery_fee delivery_fee_set delivery_method totalAmount payment_status'
+    );
+
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    res.json(order);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
@@ -161,27 +280,56 @@ router.get('/:id', protect, async (req, res) => {
 });
 
 // ─── ADMIN: UPDATE STATUS ───────────────────────────
-router.patch('/:id/status', protect, async (req, res) => {
+router.patch('/:id/status', protect, requireRole('admin', 'cashier', 'chef', 'delivery_staff'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
-    if (order.status === 'Delivered') {
-      return res.status(400).json({ message: 'Delivered orders cannot be changed' });
+    if (['Delivered', 'Completed', 'Cancelled'].includes(order.status)) {
+      return res.status(400).json({ message: `${order.status} orders cannot be changed` });
     }
 
     const newStatus = req.body.status;
     const currentStatus = order.status;
 
-    const allowedTransitions = {
-      'Pending': [],
-      'Paid': ['Processing'],
-      'Processing': ['Out for Delivery'],
+    // Pickup orders follow a different, simpler stage progression than
+    // delivery orders — there's no "Out for Delivery" leg, and it ends
+    // with "Completed" (picked up) instead of "Delivered".
+    const deliveryTransitions = {
+      'Pending': ['Confirmed', 'Processing', 'Cancelled'],
+      'Confirmed': ['Processing', 'Cancelled'],
+      'Processing': ['Out for Delivery', 'Cancelled'],
       'Out for Delivery': ['Delivered'],
-      'Delivered': []
+      'Delivered': [],
+      'Cancelled': [],
+      // Legacy bridge — orders created before this restructure may still
+      // have "Paid" stored as a fulfillment stage (it's now a payment
+      // field instead). Treat it like Pending so old orders aren't stuck.
+      'Paid': ['Confirmed', 'Processing', 'Cancelled'],
     };
+
+    const pickupTransitions = {
+      'Pending': ['Processing', 'Cancelled'],
+      'Processing': ['Ready for Pickup', 'Cancelled'],
+      'Ready for Pickup': ['Completed'],
+      'Completed': [],
+      'Cancelled': [],
+      'Paid': ['Processing', 'Cancelled'], // legacy bridge, same reasoning as above
+    };
+
+    const allowedTransitions = order.delivery_method === 'pickup' ? pickupTransitions : deliveryTransitions;
 
     if (!allowedTransitions[currentStatus]?.includes(newStatus)) {
       return res.status(400).json({ message: `Cannot move from ${currentStatus} to ${newStatus}` });
+    }
+
+    // 👨‍🍳 Chef can only move orders through kitchen prep stages — not
+    // confirm new orders, cancel, or mark final delivery/pickup completion.
+    if (req.user.role === 'chef' && !['Processing', 'Out for Delivery', 'Ready for Pickup'].includes(newStatus)) {
+      return res.status(403).json({ message: 'Chef can only update orders into kitchen prep stages' });
+    }
+    // 🚚 Delivery staff can only mark an order as Delivered — nothing else.
+    if (req.user.role === 'delivery_staff' && newStatus !== 'Delivered') {
+      return res.status(403).json({ message: 'Delivery staff can only mark orders as Delivered' });
     }
 
     order.statusHistory = order.statusHistory || [];
@@ -193,10 +341,24 @@ router.patch('/:id/status', protect, async (req, res) => {
     });
 
     order.status = newStatus;
+
+    // 📦 "Admin approves order → stock is automatically deducted." This is
+    // the FIRST time the order leaves Pending — guarded by stockDeducted so
+    // it can never happen twice even if status gets changed back and forth.
+    const isFirstApproval = (currentStatus === 'Pending' || currentStatus === 'Paid') && !order.stockDeducted;
+    if (isFirstApproval) {
+      order.stockDeducted = true;
+    }
+
     await order.save();
 
-    // Customer email only for these statuses
-    if (['Processing', 'Out for Delivery', 'Delivered'].includes(newStatus)) {
+    if (isFirstApproval) {
+      deductStockForOrder(order).catch(err => console.error('Stock deduction error:', err));
+    }
+
+    // Customer email for any real progress update — except pickup orders,
+    // which are explicitly silent (no email at all, by design).
+    if (order.delivery_method !== 'pickup' && ['Confirmed', 'Processing', 'Out for Delivery', 'Delivered', 'Cancelled'].includes(newStatus)) {
       sendOrderStatusUpdate(order).catch(err => console.error(err));
     }
 
@@ -213,14 +375,26 @@ router.patch('/:id/status', protect, async (req, res) => {
 });
 
 // ─── ADMIN: UPDATE DELIVERY FEE ─────────────────────
-router.patch('/:id/delivery-fee', protect, async (req, res) => {
+router.patch('/:id/delivery-fee', protect, requireRole('admin', 'cashier'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Not found' });
-    order.delivery_fee = req.body.delivery_fee;
+
+    if (order.delivery_method === 'pickup') {
+      return res.status(400).json({ message: 'Pickup orders never have a delivery fee — nothing to set here.' });
+    }
+
+    if (order.payment_status === 'paid') {
+      return res.status(400).json({ message: 'Cannot change delivery fee after payment has been made' });
+    }
+
+    const fee = Number(req.body.delivery_fee) || 0;
+    order.delivery_fee = fee;
+    order.delivery_fee_set = true;
+    order.totalAmount = (order.items_subtotal || 0) + fee;
     await order.save();
 
-    sendDeliveryFeeUpdate(order, order.delivery_fee).catch(err =>
+    sendDeliveryFeeUpdate(order, fee).catch(err =>
       console.error('Delivery fee email error:', err)
     );
 
