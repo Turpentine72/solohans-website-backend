@@ -4,6 +4,7 @@ import { protect, requireRole } from '../middleware/auth.js';
 import Order from '../models/Order.js';
 import Inventory from '../models/Inventory.js';
 import { inventorySnapshot } from '../utils/stockEngine.js';
+import { getIngredientReport } from '../utils/ingredientEngine.js';
 
 const router = express.Router();
 router.use(protect, requireRole('admin', 'storekeeper', 'cashier'));
@@ -97,6 +98,14 @@ router.get('/summary', protect, async (req, res) => {
     checkAlert('Extra Packaging Plastics', snapshot.extraPlastics.remaining);
     Object.entries(snapshot.extras).forEach(([key, e]) => checkAlert(e.label, e.remaining));
 
+    // ✅ Shawarma Bread / Hotdog ingredient inventory — same alerts array,
+    // same real-time contract, no separate dashboard section required.
+    const ingredientReport = await getIngredientReport();
+    ingredientReport.forEach((ing) => {
+      if (ing.outOfStock) outOfStockAlerts.push(`${ing.pieceLabel} (0 remaining)`);
+      else if (ing.lowStock) lowStockAlerts.push({ label: ing.pieceLabel, remaining: ing.remainingPieces });
+    });
+
     res.json({
       period,
       since,
@@ -109,6 +118,7 @@ router.get('/summary', protect, async (req, res) => {
         totalSales: totals.cashTotal + totals.transferTotal + totals.posTotal + totals.websitePaymentTotal,
       },
       inventory: snapshot,
+      ingredients: ingredientReport,
       analytics: {
         bestSellingMeal,
         bestSellingProtein,

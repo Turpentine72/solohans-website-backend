@@ -6,8 +6,8 @@ export class IngredientStockError extends Error {}
 // Seeds the two known ingredients on first use — safe to call repeatedly.
 export async function ensureSeedIngredients() {
   const defaults = [
-    { key: 'shawarmaBread', label: 'Shawarma Bread', piecesPerPack: 8 },
-    { key: 'hotdog', label: 'Hotdog', piecesPerPack: 12 },
+    { key: 'shawarmaBread', label: 'Shawarma Bread', pieceLabel: 'Shawarma Wrap', piecesPerPack: 8 },
+    { key: 'hotdog', label: 'Hotdog', pieceLabel: 'Hotdog', piecesPerPack: 12 },
   ];
   for (const d of defaults) {
     await Ingredient.findOneAndUpdate(
@@ -97,10 +97,9 @@ export async function assertIngredientsAvailable(resolvedItems) {
     const ingredient = byKey[key];
     const remaining = ingredient ? ingredient.remainingPieces() : 0;
     if (needed > remaining) {
-      if (remaining === 0) {
-        throw new IngredientStockError(`Insufficient ${ingredient?.label || key} Stock.`);
-      }
-      throw new IngredientStockError(`Insufficient ${ingredient?.label || key} Stock.`);
+      // Matches the spec exactly: "Insufficient Shawarma Wrap Stock." /
+      // "Insufficient Hotdog Stock." — piece-level wording, not the pack label.
+      throw new IngredientStockError(`Insufficient ${ingredient?.pieceLabel || ingredient?.label || key} Stock.`);
     }
   }
 

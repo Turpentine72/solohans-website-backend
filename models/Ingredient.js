@@ -7,7 +7,8 @@ import mongoose from 'mongoose';
 // - Packs are ALWAYS derived from remaining pieces — never edited directly.
 const ingredientSchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true }, // 'shawarmaBread' | 'hotdog' | future keys
-  label: { type: String, required: true },              // 'Shawarma Bread', 'Hotdog'
+  label: { type: String, required: true },              // pack-level label: 'Shawarma Bread', 'Hotdog'
+  pieceLabel: { type: String, required: true },          // piece-level label used in stock messages: 'Shawarma Wrap', 'Hotdog'
   piecesPerPack: { type: Number, required: true },      // 8 for bread, 12 for hotdog
 
   initialPacksAdded: { type: Number, default: 0 },      // lifetime total packs ever added
@@ -33,6 +34,7 @@ ingredientSchema.methods.toReport = function () {
   return {
     key: this.key,
     label: this.label,
+    pieceLabel: this.pieceLabel,
     piecesPerPack: this.piecesPerPack,
     initialPacksAdded: this.initialPacksAdded,
     initialPieces: this.initialPieces,
