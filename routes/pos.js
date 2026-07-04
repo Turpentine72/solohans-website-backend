@@ -39,7 +39,7 @@ router.post('/quote', async (req, res) => {
 // body: { cart: { mealPackages, extras }, paymentMethod, customerName, phone }
 router.post('/checkout', async (req, res) => {
   try {
-    const { cart, paymentMethod, customerName, phone } = req.body;
+    const { cart, paymentMethod, customerName, phone, posSaleType } = req.body;
     const staffName = req.body.staffName || req.user?.email || 'Staff';
 
     const { order, paymentTag } = await createOrderFromCheckout({
@@ -49,6 +49,7 @@ router.post('/checkout', async (req, res) => {
       staffName,
       customerName,
       phone,
+      posSaleType,
       deliveryMethod: 'pickup', // in-store sale — no delivery zone involved
     });
 

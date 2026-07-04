@@ -13,6 +13,8 @@ import DeliveryZone from '../models/DeliveryZone.js';
 import { isWithinBusinessHours } from '../utils/businessHours.js';
 import { sendPushToAdmins } from '../utils/push.js';
 import { deductStockForOrder } from '../utils/stockDeduction.js';
+import MenuItem from '../models/MenuItem.js';
+import { assertIngredientsAvailable, deductIngredientsForOrder, IngredientStockError } from '../utils/ingredientEngine.js';
 import { createOrderFromCheckout, CheckoutError } from '../utils/checkout.js';
 import { PricingError } from '../utils/pricing.js';
 import { StockError } from '../utils/stockEngine.js';
@@ -60,7 +62,7 @@ router.post('/checkout', async (req, res) => {
     });
 
     sendPushToAdmins({
-      title: '🍽️ New Meal Order',
+      title: 'New Meal Order',
       body: `${customerName || 'Customer'} — ₦${Number(order.items_subtotal).toLocaleString()}`,
       url: `/admin/orders`,
     }).catch((err) => console.error('Push notification error:', err));
@@ -129,7 +131,21 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'Delivery address is required for delivery orders' });
     }
 
-    const itemsSubtotal = Number(req.body.totalAmount) || 0;
+    // ✅ The client (CartSidebar) already computes its subtotal WITH tax
+    // included and sends that as `totalAmount` — this has always been the
+    // contract, and changing it would double-charge VAT. So here we only
+    // resolve the CURRENT tax rate from Settings and back-derive the VAT
+    // portion for storage/display — we never add tax to the payable amount
+    // a second time.
+    const itemsSubtotalWithTax = Number(req.body.totalAmount) || 0;
+    const taxEnabled = !!settings?.tax?.enabled;
+    const taxRate = settings?.tax?.rate || 0;
+    // subtotalWithTax = preTax * (1 + rate/100)  =>  preTax = subtotalWithTax / (1 + rate/100)
+    const preTaxSubtotal = taxEnabled && taxRate > 0
+      ? itemsSubtotalWithTax / (1 + taxRate / 100)
+      : itemsSubtotalWithTax;
+    const taxAmount = taxEnabled ? Math.round(itemsSubtotalWithTax - preTaxSubtotal) : 0;
+    const itemsSubtotal = itemsSubtotalWithTax; // unchanged from original behaviour
 
     // If the customer picked a delivery zone, look up its fee SERVER-SIDE
     // (never trust a fee value sent directly from the browser) and apply it
@@ -142,13 +158,36 @@ router.post('/', async (req, res) => {
 
     const feeIsKnown = delivery_method === 'pickup' || zoneFee !== null;
 
+    // ✅ Ingredient-based stock validation — BLOCKS checkout if there isn't
+    // enough Shawarma Bread / Hotdog (or any future ingredient-linked item).
+    // This runs for every sale regardless of payment method or channel,
+    // since it happens right here at order creation, before anything is saved.
+    const cartItems = Array.isArray(req.body.items) ? req.body.items : [];
+    const resolvedItems = [];
+    for (const line of cartItems) {
+      if (!line.menu_item_id) continue;
+      const menuItem = await MenuItem.findById(line.menu_item_id);
+      if (menuItem) resolvedItems.push({ menuItem, quantity: Number(line.quantity) || 1 });
+    }
+    try {
+      await assertIngredientsAvailable(resolvedItems);
+    } catch (err) {
+      if (err instanceof IngredientStockError) {
+        return res.status(400).json({ message: err.message });
+      }
+      throw err;
+    }
+
     // ✅ No longer manually create order_id – the pre‑save hook in Order.js does it
     const orderData = {
       ...req.body,
       delivery_method,
       address: delivery_method === 'delivery' ? req.body.address : '',
       items_subtotal: itemsSubtotal,
-      totalAmount: itemsSubtotal + (zoneFee || 0),
+      tax_enabled: taxEnabled,
+      tax_rate: taxRate,
+      tax_amount: taxAmount,
+      totalAmount: itemsSubtotal + (zoneFee || 0), // UNCHANGED formula — tax already inside itemsSubtotal
       delivery_fee: delivery_method === 'pickup' ? 0 : zoneFee,
       // Pickup, or a recognized zone with a known fee, can be paid immediately.
       // A custom/unlisted location still waits for admin to set a fee manually.
@@ -160,6 +199,14 @@ router.post('/', async (req, res) => {
     delete orderData._id; // safety
 
     const order = await Order.create(orderData);
+
+    // Deduct ingredient pieces immediately — this is a hard, real-time
+    // deduction, separate from the lenient per-MenuItem stock deduction
+    // below (which still only runs on first admin approval). Ingredients
+    // must never be double-deducted, so this happens exactly once, here.
+    if (resolvedItems.length) {
+      await deductIngredientsForOrder(resolvedItems, { orderId: order._id, performedBy: order.customerEmail });
+    }
 
     createNotification({
       type: 'new_order',
@@ -177,7 +224,7 @@ router.post('/', async (req, res) => {
     }
 
     sendPushToAdmins({
-      title: '🍽️ New Order Received',
+      title: 'New Order Received',
       body: `${order.customerName || 'Customer'} — ₦${Number(order.items_subtotal).toLocaleString()}`,
       url: `/admin/orders`,
     }).catch(err => console.error('Push notification error:', err));

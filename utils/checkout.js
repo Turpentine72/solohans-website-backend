@@ -2,16 +2,19 @@
 import Order from '../models/Order.js';
 import DeliveryZone from '../models/DeliveryZone.js';
 import Inventory from '../models/Inventory.js';
+import Settings from '../models/Settings.js';
+import MenuItem from '../models/MenuItem.js';
 import { priceOrder, PricingError } from './pricing.js';
 import { deductStockForOrder } from './stockEngine.js';
+import { assertIngredientsAvailable, deductIngredientsForOrder } from './ingredientEngine.js';
 
 export class CheckoutError extends Error {}
 
 const PAYMENT_TAGS = {
-  CASH: '🟢 CASH',
-  TRANSFER: '🔵 TRANSFER',
-  POS: '🟣 POS',
-  'WEBSITE PAYMENT': '🌐 WEBSITE PAYMENT',
+  CASH: 'CASH',
+  TRANSFER: 'TRANSFER',
+  POS: 'POS',
+  'WEBSITE PAYMENT': 'WEBSITE PAYMENT',
 };
 
 /**
@@ -39,11 +42,15 @@ export async function createOrderFromCheckout({
   address = '',
   deliveryMethod = null,     // if omitted: 'pickup' for store, 'delivery' for website
   deliveryZoneId = null,
+  posSaleType = null,        // 'shop' | 'restaurant' — required for source: 'store'
   notes = '',
   markPaidImmediately = false,
 }) {
   if (source === 'store' && !['CASH', 'TRANSFER', 'POS'].includes(paymentMethod)) {
     throw new CheckoutError('A payment method (Cash, Transfer or POS) is required to complete a store sale.');
+  }
+  if (source === 'store' && !['shop', 'restaurant'].includes(posSaleType)) {
+    throw new CheckoutError('Select an Order Type (Shop Sale or Restaurant Sale) to complete this sale.');
   }
   if (source === 'website') paymentMethod = 'WEBSITE PAYMENT';
 
@@ -83,6 +90,24 @@ export async function createOrderFromCheckout({
     throw err;
   }
 
+  // ✅ Generic menu items — Shawarma/Hotdog and anything else in MenuItem,
+  // sold the same way the POS sells meal combos. Ingredients are validated
+  // and deducted here; a plain, non-ingredient-linked item (drinks, sides,
+  // etc.) just adds its price with no ingredient effect.
+  const menuItemLines = Array.isArray(cart?.menuItems) ? cart.menuItems : [];
+  const resolvedMenuItems = [];
+  for (const line of menuItemLines) {
+    const menuItem = await MenuItem.findById(line.menuItemId);
+    if (!menuItem) throw new CheckoutError('One of the selected menu items no longer exists.');
+    if (!menuItem.available) throw new CheckoutError(`${menuItem.name} is currently unavailable.`);
+    const quantity = Math.max(1, Number(line.quantity) || 1);
+    resolvedMenuItems.push({ menuItem, quantity });
+  }
+  if (resolvedMenuItems.length) {
+    await assertIngredientsAvailable(resolvedMenuItems); // throws "Insufficient X Stock." if short
+  }
+  const menuItemsTotal = resolvedMenuItems.reduce((sum, { menuItem, quantity }) => sum + menuItem.price * quantity, 0);
+
   const items = [
     ...priced.mealPackages.map((mp) => ({
       name: `${mp.meals.map((m) => (m === 'friedRice' ? 'Fried Rice' : m === 'jollof' ? 'Jollof' : 'Spaghetti')).join(' + ')}${mp.protein !== 'none' ? ` + ${mp.protein}` : ''}`,
@@ -91,10 +116,21 @@ export async function createOrderFromCheckout({
       meta: mp,
     })),
     ...priced.extras.map((e) => ({ name: e.label, price: e.unitPrice, quantity: e.qty, meta: e })),
+    ...resolvedMenuItems.map(({ menuItem, quantity }) => ({
+      name: menuItem.name,
+      price: menuItem.price,
+      quantity,
+      menu_item_id: menuItem._id,
+    })),
   ];
 
-  const itemsSubtotal = priced.mealsTotal + priced.extrasTotal;
-  const totalAmount = itemsSubtotal + (deliveryFeeSet ? deliveryFee : 0);
+  const itemsSubtotal = priced.mealsTotal + priced.extrasTotal + menuItemsTotal;
+
+  const settings = await Settings.findOne();
+  const taxEnabled = !!settings?.tax?.enabled;
+  const taxRate = settings?.tax?.rate || 0;
+  const taxAmount = taxEnabled ? Math.round(itemsSubtotal * (taxRate / 100)) : 0;
+  const totalAmount = itemsSubtotal + taxAmount + (deliveryFeeSet ? deliveryFee : 0);
 
   const isStoreSale = source === 'store';
 
@@ -106,6 +142,9 @@ export async function createOrderFromCheckout({
     notes,
     items,
     items_subtotal: itemsSubtotal,
+    tax_enabled: taxEnabled,
+    tax_rate: taxRate,
+    tax_amount: taxAmount,
     totalAmount,
     delivery_method: resolvedDeliveryMethod,
     delivery_fee: resolvedDeliveryMethod === 'pickup' ? 0 : (deliveryFeeSet ? deliveryFee : null),
@@ -113,6 +152,7 @@ export async function createOrderFromCheckout({
     source,
     paymentMethod,
     staffName,
+    pos_sale_type: isStoreSale ? posSaleType : null,
     mealPackages: priced.mealPackages,
     storeExtras: priced.extras,
     lunchBoxesUsed: priced.lunchBoxesUsed,
@@ -133,6 +173,9 @@ export async function createOrderFromCheckout({
 
   // Deduct shared inventory the moment the sale is committed.
   await deductStockForOrder(priced, { orderId: order._id, performedBy: staffName || paymentMethod });
+  if (resolvedMenuItems.length) {
+    await deductIngredientsForOrder(resolvedMenuItems, { orderId: order._id, performedBy: staffName || paymentMethod });
+  }
 
   await order.save();
 

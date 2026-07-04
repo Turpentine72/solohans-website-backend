@@ -168,7 +168,10 @@ export function priceMealPackage(selection = {}) {
  */
 export function priceOrder(order = {}, extrasCatalog = DEFAULT_EXTRAS_CATALOG) {
   const mealPackages = Array.isArray(order.mealPackages) ? order.mealPackages : [];
-  if (mealPackages.length === 0) throw new PricingError('Order must contain at least one meal.');
+  const hasMenuItems = Array.isArray(order.menuItems) && order.menuItems.length > 0;
+  if (mealPackages.length === 0 && !hasMenuItems && (!order.extras || order.extras.length === 0)) {
+    throw new PricingError('Order must contain at least one item.');
+  }
 
   const pricedMeals = mealPackages.map(priceMealPackage);
 

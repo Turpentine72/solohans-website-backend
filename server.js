@@ -32,6 +32,7 @@ import inventoryRoutes from './routes/inventory.js';
 import posRoutes from './routes/pos.js';
 import dashboardRoutes from './routes/dashboard.js';
 import paymentReconciliationRoutes from './routes/paymentReconciliation.js';
+import ingredientRoutes from './routes/ingredients.js';
 
 const app = express();
 
@@ -96,6 +97,7 @@ app.use('/api/inventory', inventoryRoutes);
 app.use('/api/pos', posRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/payment-reconciliation', paymentReconciliationRoutes);
+app.use('/api/ingredients', ingredientRoutes);
 
 // ─────────────────────────────────────────────────────────
 // Health Check

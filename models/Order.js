@@ -10,8 +10,14 @@ const orderSchema = new mongoose.Schema({
   notes: { type: String, default: '' }, // customer's additional instructions for admin
   stockDeducted: { type: Boolean, default: false }, // prevents double-deduction on repeated status changes
   order_channel: { type: String, enum: ['online', 'whatsapp'], default: 'online' },
-  items_subtotal: { type: Number, default: 0 },   // items only, never includes delivery fee
-  totalAmount: { type: Number, required: true },      // final payable amount (items + delivery fee once set)
+  items_subtotal: { type: Number, default: 0 },   // items only, never includes delivery fee or VAT
+  // ✅ VAT is captured at order-creation time and never recalculated later —
+  // so historical orders stay accurate even if the admin changes the tax
+  // rate afterward.
+  tax_enabled: { type: Boolean, default: false },
+  tax_rate: { type: Number, default: 0 },     // percentage, e.g. 7.5
+  tax_amount: { type: Number, default: 0 },   // ₦ amount, computed once at creation
+  totalAmount: { type: Number, required: true },      // final payable amount (items + VAT + delivery fee once set)
   delivery_fee: { type: Number, default: null },       // null = not yet set by admin
   delivery_fee_set: { type: Boolean, default: false }, // true once admin sets it (or immediately for pickup)
   status: { type: String, default: 'Pending' }, // fulfillment stage only: Pending/Confirmed/Processing/Out for Delivery/Delivered/Cancelled
@@ -27,6 +33,10 @@ const orderSchema = new mongoose.Schema({
 
   // ─── Unified POS + Website meal-combo ordering fields ──────────────
   source: { type: String, enum: ['store', 'website'], default: 'website' },
+  // ✅ For source: 'store' orders only — replaces the meaningless "Pickup"
+  // label that in-person POS sales used to get. Never applies to website
+  // orders, which continue to use delivery_method (delivery/pickup) as normal.
+  pos_sale_type: { type: String, enum: ['shop', 'restaurant', null], default: null },
   paymentMethod: { type: String, enum: ['CASH', 'TRANSFER', 'POS', 'WEBSITE PAYMENT'], default: 'WEBSITE PAYMENT' },
   staffName: { type: String, default: '' },
   mealPackages: { type: Array, default: [] }, // priced meal packages (meals, protein, portions, extra portions)
