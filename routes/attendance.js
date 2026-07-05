@@ -2,6 +2,7 @@ import express from 'express';
 import Attendance from '../models/Attendance.js';
 import { protect, requireRole } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
+import { getShiftSummary } from '../utils/shiftHelper.js';
 
 const router = express.Router();
 
@@ -15,7 +16,9 @@ function startOfToday() {
 router.get('/today', protect, async (req, res) => {
   try {
     const record = await Attendance.findOne({ user: req.user.id, date: startOfToday() });
-    res.json(record || null);
+    if (!record) return res.json(null);
+    const summary = await getShiftSummary(record._id);
+    res.json({ ...record.toObject(), summary });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -82,14 +85,16 @@ router.post('/check-out', protect, async (req, res) => {
     record.status = 'Completed'; // 🔒 locked — can't be reopened for today
     await record.save();
 
+    const summary = await getShiftSummary(record._id);
+
     logAudit({
       userId: req.user.id,
       userEmail: req.user.email,
       action: 'Checked Out',
-      details: `${req.user.name || req.user.email} finished work — ${record.hoursWorked}h logged`,
+      details: `${req.user.name || req.user.email} finished work — ${record.hoursWorked}h logged, ₦${summary.grandTotal.toLocaleString()} total sales`,
     });
 
-    res.json(record);
+    res.json({ ...record.toObject(), summary });
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -98,7 +103,7 @@ router.post('/check-out', protect, async (req, res) => {
 // ─── Admin: Staff History with filters ──────────────────────────────────────
 router.get('/history', protect, requireRole('admin'), async (req, res) => {
   try {
-    const { date, role, status } = req.query;
+    const { date, role, status, staffId, paymentMethod } = req.query;
     const filter = {};
     if (date) {
       const start = new Date(date);
@@ -109,9 +114,30 @@ router.get('/history', protect, requireRole('admin'), async (req, res) => {
     }
     if (role) filter.role = role;
     if (status) filter.status = status;
+    if (staffId) filter.user = staffId;
 
     const records = await Attendance.find(filter).sort('-date').limit(500);
-    res.json(records);
+
+    // ✅ Admin reports: sales by staff, by payment method, website orders
+    // handled per staff, and active/completed shifts — all derived from the
+    // same per-shift summary used on the staff's own dashboard, so the
+    // numbers can never disagree between the two views.
+    const withSummary = await Promise.all(records.map(async (r) => {
+      const summary = await getShiftSummary(r._id);
+      return { ...r.toObject(), summary };
+    }));
+
+    const filtered = paymentMethod
+      ? withSummary.filter((r) => {
+          if (paymentMethod === 'CASH') return r.summary.cashSales > 0;
+          if (paymentMethod === 'TRANSFER') return r.summary.transferSales > 0;
+          if (paymentMethod === 'POS') return r.summary.posCardSales > 0;
+          if (paymentMethod === 'WEBSITE') return r.summary.websiteOrdersTaggedTotal > 0;
+          return true;
+        })
+      : withSummary;
+
+    res.json(filtered);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

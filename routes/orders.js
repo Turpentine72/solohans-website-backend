@@ -15,6 +15,7 @@ import { sendPushToAdmins } from '../utils/push.js';
 import { deductStockForOrder } from '../utils/stockDeduction.js';
 import MenuItem from '../models/MenuItem.js';
 import { assertIngredientsAvailable, deductIngredientsForOrder, IngredientStockError } from '../utils/ingredientEngine.js';
+import { getActiveShift, ShiftError } from '../utils/shiftHelper.js';
 import { createOrderFromCheckout, CheckoutError } from '../utils/checkout.js';
 import { PricingError } from '../utils/pricing.js';
 import { StockError } from '../utils/stockEngine.js';
@@ -316,6 +317,24 @@ router.get('/', protect, async (req, res) => {
 });
 
 // ─── ADMIN: GET SINGLE ──────────────────────────────
+// ─── WEBSITE ORDER TAGGING ─────────────────────────────────────────────
+// Lists pending online orders that any logged-in staff member can claim.
+// Must be registered BEFORE '/:id' below, or Express would treat
+// "website-pending" as an :id and this would never be reached.
+router.get('/website-pending', protect, async (req, res) => {
+  try {
+    const orders = await Order.find({
+      isDeleted: false,
+      source: { $ne: 'store' },      // website orders only (source defaults to 'website')
+      taggedStaffId: null,           // not yet claimed by anyone
+      status: { $nin: ['Delivered', 'Completed', 'Cancelled'] },
+    }).sort('-createdAt').limit(100);
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.get('/:id', protect, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
@@ -484,6 +503,62 @@ router.delete('/:id/permanent', protect, async (req, res) => {
   try {
     await Order.findByIdAndDelete(req.params.id);
     res.json({ message: 'Permanently deleted' });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+// ─── Tag to Me — a staff member claims a pending website order ─────────
+router.patch('/:id/tag-to-me', protect, async (req, res) => {
+  try {
+    const shift = await getActiveShift(req.user.id);
+    if (!shift) return res.status(400).json({ message: 'You need to Start Work before tagging orders.' });
+
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+    if (order.source === 'store') return res.status(400).json({ message: 'Store sales cannot be tagged.' });
+
+    // Prevent another staff member from tagging the same order unless an
+    // admin reassigns it — this check is atomic-enough for our purposes
+    // since we re-read taggedStaffId right before writing.
+    if (order.taggedStaffId && order.taggedStaffId.toString() !== req.user.id) {
+      return res.status(409).json({ message: `This order is already tagged to ${order.taggedStaffName}.` });
+    }
+
+    order.taggedStaffId = req.user.id;
+    order.taggedStaffName = req.user.name || req.user.email;
+    order.taggedShiftId = shift._id;
+    order.taggedAt = new Date();
+    await order.save();
+
+    res.json(order);
+  } catch (err) {
+    if (err instanceof ShiftError) return res.status(400).json({ message: err.message });
+    res.status(400).json({ message: err.message });
+  }
+});
+
+// ─── Admin: reassign (or clear) a tagged order ──────────────────────────
+router.patch('/:id/reassign', protect, requireRole('admin'), async (req, res) => {
+  try {
+    const { staffId, staffName } = req.body; // omit both to clear the tag entirely
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    if (!staffId) {
+      order.taggedStaffId = null;
+      order.taggedStaffName = '';
+      order.taggedShiftId = null;
+      order.taggedAt = null;
+    } else {
+      const shift = await getActiveShift(staffId);
+      order.taggedStaffId = staffId;
+      order.taggedStaffName = staffName || '';
+      order.taggedShiftId = shift?._id || null;
+      order.taggedAt = new Date();
+    }
+    await order.save();
+    res.json(order);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }

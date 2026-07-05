@@ -1,0 +1,69 @@
+// backend/utils/shiftHelper.js
+import Attendance from '../models/Attendance.js';
+import Order from '../models/Order.js';
+
+export class ShiftError extends Error {}
+
+function startOfToday() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/**
+ * Returns the staff member's active (checked-in, not checked-out) shift for
+ * today, or null if they haven't started work. Mirrors the exact
+ * one-shift-per-day semantics already used by routes/attendance.js.
+ */
+export async function getActiveShift(userId) {
+  const record = await Attendance.findOne({ user: userId, date: startOfToday() });
+  if (!record || !record.checkIn || record.status !== 'Active') return null;
+  return record;
+}
+
+/**
+ * Requires an active shift to exist — throws a clear, actionable error if
+ * not. Used to block POS sales until the staff member has clicked "Start Work".
+ */
+export async function requireActiveShift(userId) {
+  const shift = await getActiveShift(userId);
+  if (!shift) {
+    throw new ShiftError('You need to Start Work before making sales.');
+  }
+  return shift;
+}
+
+/**
+ * Computes a full shift summary — used for the live Staff Dashboard (while
+ * the shift is still Active) and the final summary shown on End Work.
+ * Combines two independent things happening in one shift:
+ *   1. Walk-in POS sales the staff personally rang up (by payment method)
+ *   2. Website orders the staff tagged to themselves ("Tag to Me")
+ */
+export async function getShiftSummary(shiftId) {
+  const posSales = await Order.find({ shiftId, source: 'store', isDeleted: false });
+  const taggedOrders = await Order.find({ taggedShiftId: shiftId, isDeleted: false });
+
+  const summary = {
+    cashSales: 0,
+    transferSales: 0,
+    posCardSales: 0,
+    websiteOrdersTaggedCount: taggedOrders.length,
+    websiteOrdersTaggedTotal: 0,
+    ordersHandled: posSales.length + taggedOrders.length,
+  };
+
+  posSales.forEach((o) => {
+    if (o.paymentMethod === 'CASH') summary.cashSales += o.totalAmount || 0;
+    else if (o.paymentMethod === 'TRANSFER') summary.transferSales += o.totalAmount || 0;
+    else if (o.paymentMethod === 'POS') summary.posCardSales += o.totalAmount || 0;
+  });
+
+  taggedOrders.forEach((o) => {
+    summary.websiteOrdersTaggedTotal += o.totalAmount || 0;
+  });
+
+  summary.grandTotal = summary.cashSales + summary.transferSales + summary.posCardSales + summary.websiteOrdersTaggedTotal;
+
+  return summary;
+}

@@ -11,9 +11,12 @@ export const protect = async (req, res, next) => {
     // carries the tokenVersion it was issued under. If the user's current
     // tokenVersion has moved on (changed password), this token is dead,
     // even though it hasn't technically expired yet.
-    const user = await User.findById(payload.id).select('tokenVersion');
+    const user = await User.findById(payload.id).select('tokenVersion status');
     if (!user || user.tokenVersion !== payload.tokenVersion) {
       return res.status(401).json({ message: 'Session expired — please log in again' });
+    }
+    if (user.status === 'Inactive') {
+      return res.status(403).json({ message: 'This account has been deactivated.' });
     }
 
     req.user = payload;

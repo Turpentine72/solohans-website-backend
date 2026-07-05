@@ -37,6 +37,22 @@ const orderSchema = new mongoose.Schema({
   // label that in-person POS sales used to get. Never applies to website
   // orders, which continue to use delivery_method (delivery/pickup) as normal.
   pos_sale_type: { type: String, enum: ['shop', 'restaurant', null], default: null },
+
+  // ✅ Staff Shift & POS Tracking — every POS sale is automatically linked
+  // to whoever is logged in and on an active shift. Staff never type their
+  // own name; this is always set server-side from the authenticated session.
+  staffId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  staffNameSnapshot: { type: String, default: '' }, // captured at sale time — survives staff renames/deletion
+  shiftId: { type: mongoose.Schema.Types.ObjectId, ref: 'Attendance', default: null },
+
+  // ✅ Website Order Tagging — a staff member claims a pending online order
+  // for themselves ("Tag to Me"). Separate from staffId/shiftId above,
+  // since tagging happens AFTER the order already exists, and only one
+  // staff member may hold a given order at a time.
+  taggedStaffId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  taggedStaffName: { type: String, default: '' },
+  taggedShiftId: { type: mongoose.Schema.Types.ObjectId, ref: 'Attendance', default: null },
+  taggedAt: { type: Date, default: null },
   paymentMethod: { type: String, enum: ['CASH', 'TRANSFER', 'POS', 'WEBSITE PAYMENT'], default: 'WEBSITE PAYMENT' },
   staffName: { type: String, default: '' },
   mealPackages: { type: Array, default: [] }, // priced meal packages (meals, protein, portions, extra portions)

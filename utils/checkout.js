@@ -7,6 +7,7 @@ import MenuItem from '../models/MenuItem.js';
 import { priceOrder, PricingError } from './pricing.js';
 import { deductStockForOrder } from './stockEngine.js';
 import { assertIngredientsAvailable, deductIngredientsForOrder } from './ingredientEngine.js';
+import { requireActiveShift, ShiftError } from './shiftHelper.js';
 
 export class CheckoutError extends Error {}
 
@@ -36,6 +37,7 @@ export async function createOrderFromCheckout({
   source,               // 'store' | 'website'
   paymentMethod,        // 'CASH' | 'TRANSFER' | 'POS' | 'WEBSITE PAYMENT'
   staffName = '',
+  staffUserId = null,        // logged-in staff's User _id — required for source: 'store'
   customerName = '',
   customerEmail = '',
   phone = '',
@@ -53,6 +55,20 @@ export async function createOrderFromCheckout({
     throw new CheckoutError('Select an Order Type (Shop Sale or Restaurant Sale) to complete this sale.');
   }
   if (source === 'website') paymentMethod = 'WEBSITE PAYMENT';
+
+  // ✅ Every POS sale is automatically linked to the logged-in staff member's
+  // active shift — staff never type their own name, and a sale can't be
+  // completed at all without having clicked "Start Work" first.
+  let activeShift = null;
+  if (source === 'store') {
+    if (!staffUserId) throw new CheckoutError('You must be logged in to complete a sale.');
+    try {
+      activeShift = await requireActiveShift(staffUserId);
+    } catch (err) {
+      if (err instanceof ShiftError) throw new CheckoutError(err.message);
+      throw err;
+    }
+  }
 
   const resolvedDeliveryMethod = deliveryMethod || (source === 'store' ? 'pickup' : 'delivery');
 
@@ -153,6 +169,9 @@ export async function createOrderFromCheckout({
     paymentMethod,
     staffName,
     pos_sale_type: isStoreSale ? posSaleType : null,
+    staffId: isStoreSale ? staffUserId : null,
+    staffNameSnapshot: isStoreSale ? staffName : '',
+    shiftId: isStoreSale ? activeShift._id : null,
     mealPackages: priced.mealPackages,
     storeExtras: priced.extras,
     lunchBoxesUsed: priced.lunchBoxesUsed,

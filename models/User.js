@@ -15,6 +15,9 @@ const userSchema = new mongoose.Schema({
   passwordHistory: { type: [String], default: [] }, // last few hashed passwords — prevents reuse
   tokenVersion: { type: Number, default: 0 }, // bump on password change to invalidate old JWTs ("logout all sessions")
   fcmTokens: { type: [String], default: [] }, // browser push notification tokens
+  // ✅ Deactivating a staff account blocks login without deleting their
+  // history — sales, shifts, and audit logs stay intact either way.
+  status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' },
 }, { timestamps: true });
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();

@@ -115,6 +115,35 @@ router.patch('/:id/role', async (req, res) => {
   }
 });
 
+// ─── Activate / deactivate a staff account ────────────────────────────────
+router.patch('/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    if (!['Active', 'Inactive'].includes(status)) {
+      return res.status(400).json({ message: 'Status must be Active or Inactive' });
+    }
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'Staff not found' });
+    if (user._id.toString() === req.user.id && status === 'Inactive') {
+      return res.status(400).json({ message: 'You cannot deactivate your own account' });
+    }
+
+    user.status = status;
+    await user.save();
+
+    logAudit({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      action: status === 'Active' ? 'Staff Activated' : 'Staff Deactivated',
+      details: `${status === 'Active' ? 'Activated' : 'Deactivated'} staff account ${user.email}`,
+    });
+
+    res.json({ id: user._id, name: user.name, email: user.email, role: user.role, status: user.status });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
 // ─── Admin resets a staff member's password ───────────────────────────────
 router.patch('/:id/reset-password', async (req, res) => {
   try {

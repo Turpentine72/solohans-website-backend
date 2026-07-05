@@ -25,6 +25,9 @@ router.post('/login', async (req, res) => {
     if (!user || !(await user.comparePassword(password))) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
+    if (user.status === 'Inactive') {
+      return res.status(403).json({ message: 'This account has been deactivated. Contact an admin.' });
+    }
     res.json({
       token: signToken(user),
       user: { id: user._id, email: user.email, name: user.name, role: user.role },

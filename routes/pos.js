@@ -40,13 +40,17 @@ router.post('/quote', async (req, res) => {
 router.post('/checkout', async (req, res) => {
   try {
     const { cart, paymentMethod, customerName, phone, posSaleType } = req.body;
-    const staffName = req.body.staffName || req.user?.email || 'Staff';
+    // ✅ Never take staff identity from the request body — always the
+    // authenticated session, so staff never manually enter their own name.
+    const staffName = req.user?.name || req.user?.email || 'Staff';
+    const staffUserId = req.user?.id;
 
     const { order, paymentTag } = await createOrderFromCheckout({
       cart,
       source: 'store',
       paymentMethod,
       staffName,
+      staffUserId,
       customerName,
       phone,
       posSaleType,
