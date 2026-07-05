@@ -15,6 +15,7 @@ const PAYMENT_TAGS = {
   CASH: 'CASH',
   TRANSFER: 'TRANSFER',
   POS: 'POS',
+  SPLIT: 'SPLIT PAYMENT',
   'WEBSITE PAYMENT': 'WEBSITE PAYMENT',
 };
 
@@ -35,7 +36,8 @@ const PAYMENT_TAGS = {
 export async function createOrderFromCheckout({
   cart,
   source,               // 'store' | 'website'
-  paymentMethod,        // 'CASH' | 'TRANSFER' | 'POS' | 'WEBSITE PAYMENT'
+  paymentMethod,        // 'CASH' | 'TRANSFER' | 'POS' | 'SPLIT' | 'WEBSITE PAYMENT'
+  splitPayments = [],   // [{ method: 'CASH'|'TRANSFER'|'POS', amount }] — required when paymentMethod === 'SPLIT'
   staffName = '',
   staffUserId = null,        // logged-in staff's User _id — required for source: 'store'
   customerName = '',
@@ -48,8 +50,21 @@ export async function createOrderFromCheckout({
   notes = '',
   markPaidImmediately = false,
 }) {
-  if (source === 'store' && !['CASH', 'TRANSFER', 'POS'].includes(paymentMethod)) {
-    throw new CheckoutError('A payment method (Cash, Transfer or POS) is required to complete a store sale.');
+  if (source === 'store' && !['CASH', 'TRANSFER', 'POS', 'SPLIT'].includes(paymentMethod)) {
+    throw new CheckoutError('A payment method (Cash, Transfer, POS, or Split Payment) is required to complete a store sale.');
+  }
+  if (source === 'store' && paymentMethod === 'SPLIT') {
+    if (!Array.isArray(splitPayments) || splitPayments.length < 1) {
+      throw new CheckoutError('Add at least one payment entry for a split payment.');
+    }
+    for (const entry of splitPayments) {
+      if (!['CASH', 'TRANSFER', 'POS'].includes(entry.method)) {
+        throw new CheckoutError('Each split payment entry must use Cash, Transfer, or POS.');
+      }
+      if (!(Number(entry.amount) > 0)) {
+        throw new CheckoutError('Each split payment entry must have an amount greater than ₦0.');
+      }
+    }
   }
   if (source === 'store' && !['shop', 'restaurant'].includes(posSaleType)) {
     throw new CheckoutError('Select an Order Type (Shop Sale or Restaurant Sale) to complete this sale.');
@@ -148,6 +163,21 @@ export async function createOrderFromCheckout({
   const taxAmount = taxEnabled ? Math.round(itemsSubtotal * (taxRate / 100)) : 0;
   const totalAmount = itemsSubtotal + taxAmount + (deliveryFeeSet ? deliveryFee : 0);
 
+  // ✅ Split Payment must add up to EXACTLY the order total — never trust
+  // the client's own math, even though the POS UI already enforces this.
+  if (source === 'store' && paymentMethod === 'SPLIT') {
+    const paidTotal = splitPayments.reduce((sum, e) => sum + Number(e.amount), 0);
+    // Naira amounts are whole numbers in this app; a fraction of a kobo of
+    // float drift is tolerated, anything more is a real mismatch.
+    if (Math.abs(paidTotal - totalAmount) > 0.5) {
+      throw new CheckoutError(
+        paidTotal < totalAmount
+          ? `Split payment is short by ₦${(totalAmount - paidTotal).toLocaleString()}.`
+          : `Split payment exceeds the total by ₦${(paidTotal - totalAmount).toLocaleString()}.`
+      );
+    }
+  }
+
   const isStoreSale = source === 'store';
 
   const order = new Order({
@@ -169,6 +199,9 @@ export async function createOrderFromCheckout({
     paymentMethod,
     staffName,
     pos_sale_type: isStoreSale ? posSaleType : null,
+    splitPayments: isStoreSale && paymentMethod === 'SPLIT'
+      ? splitPayments.map((e) => ({ method: e.method, amount: Number(e.amount) }))
+      : [],
     staffId: isStoreSale ? staffUserId : null,
     staffNameSnapshot: isStoreSale ? staffName : '',
     shiftId: isStoreSale ? activeShift._id : null,

@@ -40,6 +40,13 @@ async function expectedTotalsForToday() {
     else if (o.paymentMethod === 'TRANSFER') expected.transferTotal += o.totalAmount || 0;
     else if (o.paymentMethod === 'POS') expected.posTotal += o.totalAmount || 0;
     else if (o.paymentMethod === 'WEBSITE PAYMENT') expected.websitePaymentTotal += o.totalAmount || 0;
+    else if (o.paymentMethod === 'SPLIT') {
+      (o.splitPayments || []).forEach((sp) => {
+        if (sp.method === 'CASH') expected.cashTotal += sp.amount || 0;
+        else if (sp.method === 'TRANSFER') expected.transferTotal += sp.amount || 0;
+        else if (sp.method === 'POS') expected.posTotal += sp.amount || 0;
+      });
+    }
   });
   expected.totalSales = expected.cashTotal + expected.transferTotal + expected.posTotal + expected.websitePaymentTotal;
   return expected;

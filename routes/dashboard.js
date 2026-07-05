@@ -62,6 +62,13 @@ router.get('/summary', protect, async (req, res) => {
       else if (o.paymentMethod === 'TRANSFER') totals.transferTotal += o.totalAmount || 0;
       else if (o.paymentMethod === 'POS') totals.posTotal += o.totalAmount || 0;
       else if (o.paymentMethod === 'WEBSITE PAYMENT') totals.websitePaymentTotal += o.totalAmount || 0;
+      else if (o.paymentMethod === 'SPLIT') {
+        (o.splitPayments || []).forEach((sp) => {
+          if (sp.method === 'CASH') totals.cashTotal += sp.amount || 0;
+          else if (sp.method === 'TRANSFER') totals.transferTotal += sp.amount || 0;
+          else if (sp.method === 'POS') totals.posTotal += sp.amount || 0;
+        });
+      }
 
       totals.lunchBoxesUsed += o.lunchBoxesUsed || 0;
 

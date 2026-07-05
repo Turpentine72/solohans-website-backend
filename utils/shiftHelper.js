@@ -57,6 +57,13 @@ export async function getShiftSummary(shiftId) {
     if (o.paymentMethod === 'CASH') summary.cashSales += o.totalAmount || 0;
     else if (o.paymentMethod === 'TRANSFER') summary.transferSales += o.totalAmount || 0;
     else if (o.paymentMethod === 'POS') summary.posCardSales += o.totalAmount || 0;
+    else if (o.paymentMethod === 'SPLIT') {
+      (o.splitPayments || []).forEach((sp) => {
+        if (sp.method === 'CASH') summary.cashSales += sp.amount || 0;
+        else if (sp.method === 'TRANSFER') summary.transferSales += sp.amount || 0;
+        else if (sp.method === 'POS') summary.posCardSales += sp.amount || 0;
+      });
+    }
   });
 
   taggedOrders.forEach((o) => {
