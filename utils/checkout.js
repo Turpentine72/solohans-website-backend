@@ -215,6 +215,12 @@ export async function createOrderFromCheckout({
     // already complete, matching the "Completed" terminal pickup stage.
     status: isStoreSale ? 'Completed' : 'Pending',
     payment_status: isStoreSale || markPaidImmediately ? 'paid' : 'unpaid',
+    // ✅ POS sales (Cash, Transfer, POS/Card, or Split) are verified the
+    // instant the cashier completes checkout — the cashier has already
+    // confirmed the money changed hands, so there's nothing left to verify
+    // manually. Website orders are untouched here; they're verified
+    // separately by routes/payments.js once Paystack confirms the charge.
+    verification_status: isStoreSale ? 'Verified' : 'Not Verified',
     // These orders are deducted from the shared Inventory system (rice
     // scoops / spaghetti plastics / lunch boxes) immediately below — NOT
     // via the old MenuItem-based deductStockForOrder() that runs on first

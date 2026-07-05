@@ -16,6 +16,7 @@ import { deductStockForOrder } from '../utils/stockDeduction.js';
 import MenuItem from '../models/MenuItem.js';
 import { assertIngredientsAvailable, deductIngredientsForOrder, IngredientStockError } from '../utils/ingredientEngine.js';
 import { getActiveShift, ShiftError } from '../utils/shiftHelper.js';
+import { archiveOldCompletedOrders } from '../utils/autoArchive.js';
 import { createOrderFromCheckout, CheckoutError } from '../utils/checkout.js';
 import { PricingError } from '../utils/pricing.js';
 import { StockError } from '../utils/stockEngine.js';
@@ -307,6 +308,12 @@ router.get('/payment-info', async (req, res) => {
 // ─── ADMIN: GET ALL (exclude deleted by default, ?deleted=true to include) ──
 router.get('/', protect, async (req, res) => {
   try {
+    // ✅ Automatic 7-day archiving — runs quietly before every fetch, so
+    // completed orders age out of the main Orders view on their own.
+    // (Payment Verification always passes ?deleted=true, so verified
+    // payments keep showing there regardless of this sweep.)
+    await archiveOldCompletedOrders();
+
     const includeDeleted = req.query.deleted === 'true';
     const filter = includeDeleted ? {} : { isDeleted: false };
     const orders = await Order.find(filter).sort({ createdAt: -1 });
