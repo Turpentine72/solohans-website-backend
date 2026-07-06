@@ -16,7 +16,7 @@ export const protect = async (req, res, next) => {
       return res.status(401).json({ message: 'Session expired — please log in again' });
     }
     if (user.status === 'Inactive') {
-      return res.status(403).json({ message: 'This account has been deactivated.' });
+      return res.status(403).json({ message: 'Your account has been deactivated. Please contact the administrator.' });
     }
 
     req.user = payload;

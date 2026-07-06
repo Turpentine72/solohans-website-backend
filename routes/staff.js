@@ -129,6 +129,13 @@ router.patch('/:id/status', async (req, res) => {
     }
 
     user.status = status;
+    if (status === 'Inactive') {
+      // ✅ Belt-and-suspenders "log out of all devices" — any JWT already
+      // issued to this user (on any device/browser) carries the OLD
+      // tokenVersion and is instantly rejected by the protect middleware,
+      // independent of the status check.
+      user.tokenVersion = (user.tokenVersion || 0) + 1;
+    }
     await user.save();
 
     logAudit({

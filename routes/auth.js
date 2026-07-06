@@ -26,7 +26,7 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
     if (user.status === 'Inactive') {
-      return res.status(403).json({ message: 'This account has been deactivated. Contact an admin.' });
+      return res.status(403).json({ message: 'Your account has been deactivated. Please contact the administrator.' });
     }
     res.json({
       token: signToken(user),
@@ -305,6 +305,16 @@ router.post('/change-password/verify', protect, async (req, res) => {
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
+});
+
+// ─── Lightweight session check — GET /api/auth/me ────────────────────────
+// Passing through `protect` is the entire point: it already re-validates
+// tokenVersion and status against the live database on every call. The
+// frontend polls this periodically so a staff member who is deactivated
+// while idle (not clicking anything) still gets logged out within seconds,
+// not just on their next incidental API call.
+router.get('/me', protect, async (req, res) => {
+  res.json({ id: req.user.id, email: req.user.email, name: req.user.name, role: req.user.role });
 });
 
 export default router;
