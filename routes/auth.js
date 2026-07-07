@@ -2,6 +2,7 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import User from '../models/User.js';
+import Role from '../models/Role.js';
 import Otp from '../models/Otp.js';
 import { sendBrandedEmail, sendPasswordChangeAlertToAdmin } from '../utils/emailTemplates.js'; // ✅ branded emails
 import { protect } from '../middleware/auth.js';
@@ -28,9 +29,14 @@ router.post('/login', async (req, res) => {
     if (user.status === 'Inactive') {
       return res.status(403).json({ message: 'Your account has been deactivated. Please contact the administrator.' });
     }
+    let permissions = {};
+    if (!user.isSuperAdmin) {
+      const role = await Role.findOne({ name: user.role });
+      if (role?.permissions) permissions = Object.fromEntries(role.permissions);
+    }
     res.json({
       token: signToken(user),
-      user: { id: user._id, email: user.email, name: user.name, role: user.role },
+      user: { id: user._id, email: user.email, name: user.name, role: user.role, isSuperAdmin: user.isSuperAdmin, permissions },
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -314,7 +320,25 @@ router.post('/change-password/verify', protect, async (req, res) => {
 // while idle (not clicking anything) still gets logged out within seconds,
 // not just on their next incidental API call.
 router.get('/me', protect, async (req, res) => {
-  res.json({ id: req.user.id, email: req.user.email, name: req.user.name, role: req.user.role });
+  try {
+    let permissions = {};
+    if (!req.user.isSuperAdmin) {
+      const role = await Role.findOne({ name: req.user.role });
+      if (role?.permissions) {
+        permissions = Object.fromEntries(role.permissions);
+      }
+    }
+    res.json({
+      id: req.user.id,
+      email: req.user.email,
+      name: req.user.name,
+      role: req.user.role,
+      isSuperAdmin: req.user.isSuperAdmin,
+      permissions, // ignored entirely by the frontend when isSuperAdmin is true
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 });
 
 export default router;

@@ -1,7 +1,7 @@
 import express from 'express';
 import MenuItem from '../models/MenuItem.js';
 import Category from '../models/Category.js';
-import { protect } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -18,7 +18,11 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.post('/', protect, async (req, res) => {
+// ✅ RBAC fix — these three previously only required being logged in, with
+// NO role check at all: any cashier, chef, or delivery staff could change
+// prices or delete menu items. Now gated to whatever the Super Admin
+// actually grants for the 'menu' module.
+router.post('/', protect, requirePermission('menu', 'create'), async (req, res) => {
   try {
     // Resolve category name from category_id if provided
     if (req.body.category_id) {
@@ -32,7 +36,7 @@ router.post('/', protect, async (req, res) => {
   }
 });
 
-router.put('/:id', protect, async (req, res) => {
+router.put('/:id', protect, requirePermission('menu', 'edit'), async (req, res) => {
   try {
     if (req.body.category_id) {
       const cat = await Category.findById(req.body.category_id);
@@ -45,7 +49,7 @@ router.put('/:id', protect, async (req, res) => {
   }
 });
 
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, requirePermission('menu', 'delete'), async (req, res) => {
   try {
     await MenuItem.findByIdAndDelete(req.params.id);
     res.json({ message: 'Deleted' });

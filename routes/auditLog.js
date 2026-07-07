@@ -1,11 +1,11 @@
 import express from 'express';
 import AuditLog from '../models/AuditLog.js';
-import { protect, requireRole } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
 
 const router = express.Router();
 
-router.get('/', protect, requireRole('admin'), async (req, res) => {
+router.get('/', protect, requirePermission('audit_log', 'view'), async (req, res) => {
   try {
     const logs = await AuditLog.find().sort('-timestamp').limit(200);
     res.json(logs);
@@ -14,12 +14,14 @@ router.get('/', protect, requireRole('admin'), async (req, res) => {
   }
 });
 
-// ─── Clear / Reset Audit Log ────────────────────────────────────────────
-// NOTE: gated to role 'admin' for now, since this system doesn't yet have
-// a distinct "Super Admin" tier separate from a staff-assigned 'admin'
-// role — that's part of the larger RBAC overhaul, not built here. Once
-// that exists, tighten this to requireRole('superadmin') only.
-router.delete('/', protect, requireRole('admin'), async (req, res) => {
+// ─── Clear / Reset Audit Log — Super Admin ONLY, per spec ───────────────
+// Deliberately NOT requirePermission() here — this is one of the few
+// actions the spec says must be restricted to the Super Admin specifically,
+// not configurable per-role like everything else.
+router.delete('/', protect, async (req, res) => {
+  if (!req.user.isSuperAdmin) {
+    return res.status(403).json({ message: 'Only a Super Admin can clear the audit log.' });
+  }
   try {
     const { deletedCount } = await AuditLog.deleteMany({});
     // The clear action itself becomes the first entry in the fresh log —

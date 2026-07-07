@@ -1,17 +1,20 @@
 import express from 'express';
 import User from '../models/User.js';
 import Role from '../models/Role.js';
-import { protect, requireRole } from '../middleware/auth.js';
+import { protect, requireRole, requirePermission } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
 import { sendPasswordChangeAlertToAdmin } from '../utils/emailTemplates.js';
 
 const router = express.Router();
 
-// All staff routes are admin-only.
-router.use(protect, requireRole('admin'));
+// ✅ RBAC — only `protect` (must be logged in) at the router level now.
+// Each route below checks the specific permission it actually needs, so a
+// Super Admin can grant a custom role (not necessarily named "admin")
+// staff-management access without that role needing to BE 'admin'.
+router.use(protect);
 
 // ─── List all staff ───────────────────────────────────────────────────────
-router.get('/', async (req, res) => {
+router.get('/', requirePermission('staff', 'view'), async (req, res) => {
   try {
     const staff = await User.find().select('-password').sort('-createdAt');
     res.json(staff);
@@ -21,7 +24,7 @@ router.get('/', async (req, res) => {
 });
 
 // ─── Create a new staff account ───────────────────────────────────────────
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('staff', 'create'), async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
     if (!email || !password) {
@@ -59,7 +62,7 @@ router.post('/', async (req, res) => {
 });
 
 // ─── Update a staff member's name and/or email ────────────────────────────
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requirePermission('staff', 'edit'), async (req, res) => {
   try {
     const { name, email } = req.body;
     const user = await User.findById(req.params.id);
@@ -88,7 +91,7 @@ router.patch('/:id', async (req, res) => {
 });
 
 // ─── Change a staff member's role ─────────────────────────────────────────
-router.patch('/:id/role', async (req, res) => {
+router.patch('/:id/role', requirePermission('staff', 'manage'), async (req, res) => {
   try {
     const { role } = req.body;
     const roleDoc = await Role.findOne({ name: role });
@@ -116,7 +119,7 @@ router.patch('/:id/role', async (req, res) => {
 });
 
 // ─── Activate / deactivate a staff account ────────────────────────────────
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', requirePermission('staff', 'manage'), async (req, res) => {
   try {
     const { status } = req.body;
     if (!['Active', 'Inactive'].includes(status)) {
@@ -152,7 +155,7 @@ router.patch('/:id/status', async (req, res) => {
 });
 
 // ─── Admin resets a staff member's password ───────────────────────────────
-router.patch('/:id/reset-password', async (req, res) => {
+router.patch('/:id/reset-password', requirePermission('staff', 'manage'), async (req, res) => {
   try {
     const { newPassword } = req.body;
     if (!newPassword || newPassword.length < 6) {
@@ -181,7 +184,7 @@ router.patch('/:id/reset-password', async (req, res) => {
 });
 
 // ─── Delete a staff account ───────────────────────────────────────────────
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requirePermission('staff', 'delete'), async (req, res) => {
   try {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'Staff not found' });

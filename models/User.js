@@ -18,6 +18,12 @@ const userSchema = new mongoose.Schema({
   // ✅ Deactivating a staff account blocks login without deleting their
   // history — sales, shifts, and audit logs stay intact either way.
   status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' },
+  // ✅ RBAC — Super Admin bypasses every permission check, always,
+  // regardless of what their assigned role's permissions say. This is
+  // deliberately separate from `role` (a string like "admin"), since a
+  // role named "admin" is just an ordinary configurable role like any
+  // other under the new permission system — only this flag is unrestricted.
+  isSuperAdmin: { type: Boolean, default: false },
 }, { timestamps: true });
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
