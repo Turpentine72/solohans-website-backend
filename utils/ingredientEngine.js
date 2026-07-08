@@ -127,3 +127,78 @@ export async function getIngredientReport() {
   const ingredients = await Ingredient.find().sort('label');
   return ingredients.map((i) => i.toReport());
 }
+
+// ─── Generalized CRUD — lets an admin define ANY ingredient, not just the
+// two seeded ones. Existing seeded ingredients (shawarmaBread, hotdog) keep
+// working exactly as before; this is purely additive. ────────────────────
+
+function slugifyKey(label) {
+  return String(label)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+(.)/g, (_, c) => c.toUpperCase())
+    .replace(/[^a-zA-Z0-9]/g, '');
+}
+
+export async function createIngredient({ label, pieceLabel, piecesPerPack, lowStockThresholdPieces, key }) {
+  if (!label?.trim()) throw new IngredientStockError('Ingredient name is required.');
+  if (!pieceLabel?.trim()) throw new IngredientStockError('Piece label is required (used in low-stock messages).');
+  const packs = Number(piecesPerPack);
+  if (!packs || packs <= 0) throw new IngredientStockError('Pieces per pack must be a positive number.');
+
+  const resolvedKey = (key?.trim() || slugifyKey(label)) || `ingredient${Date.now()}`;
+  const existing = await Ingredient.findOne({ key: resolvedKey });
+  if (existing) throw new IngredientStockError(`An ingredient with key "${resolvedKey}" already exists.`);
+
+  const ingredient = await Ingredient.create({
+    key: resolvedKey,
+    label: label.trim(),
+    pieceLabel: pieceLabel.trim(),
+    piecesPerPack: packs,
+    lowStockThresholdPieces: Number(lowStockThresholdPieces) > 0 ? Number(lowStockThresholdPieces) : 16,
+  });
+  return ingredient.toReport();
+}
+
+export async function updateIngredient(id, { label, pieceLabel, piecesPerPack, lowStockThresholdPieces }) {
+  const ingredient = await Ingredient.findById(id);
+  if (!ingredient) throw new IngredientStockError('Ingredient not found.');
+
+  // key is intentionally immutable after creation — MenuItem recipes and the
+  // hardcoded Shawarma fallback table both reference it, so changing it
+  // silently would break existing recipes.
+  if (label?.trim()) ingredient.label = label.trim();
+  if (pieceLabel?.trim()) ingredient.pieceLabel = pieceLabel.trim();
+  if (piecesPerPack !== undefined) {
+    const packs = Number(piecesPerPack);
+    if (!packs || packs <= 0) throw new IngredientStockError('Pieces per pack must be a positive number.');
+    ingredient.piecesPerPack = packs;
+  }
+  if (lowStockThresholdPieces !== undefined) {
+    ingredient.lowStockThresholdPieces = Math.max(0, Number(lowStockThresholdPieces) || 0);
+  }
+  await ingredient.save();
+  return ingredient.toReport();
+}
+
+export async function deleteIngredient(id) {
+  const MenuItem = (await import('../models/MenuItem.js')).default;
+  const ingredient = await Ingredient.findById(id);
+  if (!ingredient) throw new IngredientStockError('Ingredient not found.');
+
+  const inUse = await MenuItem.findOne({ 'ingredients.key': ingredient.key });
+  if (inUse) {
+    throw new IngredientStockError(
+      `Can't delete "${ingredient.label}" — it's used in the recipe for "${inUse.name}". Remove it from that recipe first.`
+    );
+  }
+
+  await Ingredient.deleteOne({ _id: id });
+  return { key: ingredient.key };
+}
+
+export async function listIngredients() {
+  await ensureSeedIngredients();
+  const list = await Ingredient.find().sort('label');
+  return list.map((i) => i.toReport());
+}

@@ -32,6 +32,7 @@ ingredientSchema.methods.packsConsumed = function () {
 
 ingredientSchema.methods.toReport = function () {
   return {
+    _id: this._id,
     key: this.key,
     label: this.label,
     pieceLabel: this.pieceLabel,
