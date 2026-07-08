@@ -49,6 +49,8 @@ export async function createOrderFromCheckout({
   posSaleType = null,        // 'shop' | 'restaurant' — required for source: 'store'
   notes = '',
   markPaidImmediately = false,
+  platform = 'Walk-in',      // 'Walk-in' | 'Glovo' | 'Chowdeck' | 'Uber Eats' | 'Other'
+  externalOrderId = '',      // required for every non-Walk-in platform
 }) {
   if (source === 'store' && !['CASH', 'TRANSFER', 'POS', 'SPLIT'].includes(paymentMethod)) {
     throw new CheckoutError('A payment method (Cash, Transfer, POS, or Split Payment) is required to complete a store sale.');
@@ -69,6 +71,26 @@ export async function createOrderFromCheckout({
   if (source === 'store' && !['shop', 'restaurant'].includes(posSaleType)) {
     throw new CheckoutError('Select an Order Type (Shop Sale or Restaurant Sale) to complete this sale.');
   }
+
+  // ✅ Platform Order Recording — third-party platforms are logged manually
+  // at POS (no API integration). Every platform other than Walk-in requires
+  // a real External Order ID, and that ID can never be reused for the same
+  // platform (guards against re-entering the same delivery order twice).
+  const VALID_PLATFORMS = ['Walk-in', 'Glovo', 'Chowdeck', 'Uber Eats', 'Other'];
+  if (!VALID_PLATFORMS.includes(platform)) {
+    throw new CheckoutError('Select a valid order platform.');
+  }
+  const trimmedExternalOrderId = String(externalOrderId || '').trim();
+  if (platform !== 'Walk-in') {
+    if (!trimmedExternalOrderId) {
+      throw new CheckoutError(`${platform} Order ID is required for a ${platform} order.`);
+    }
+    const duplicate = await Order.findOne({ platform, externalOrderId: trimmedExternalOrderId, isDeleted: { $ne: true } });
+    if (duplicate) {
+      throw new CheckoutError(`A ${platform} order with ID "${trimmedExternalOrderId}" has already been recorded (Order #${duplicate.order_id}).`);
+    }
+  }
+
   if (source === 'website') paymentMethod = 'WEBSITE PAYMENT';
 
   // ✅ Every POS sale is automatically linked to the logged-in staff member's
@@ -210,6 +232,8 @@ export async function createOrderFromCheckout({
     lunchBoxesUsed: priced.lunchBoxesUsed,
     mealsTotal: priced.mealsTotal,
     extrasTotal: priced.extrasTotal,
+    platform,
+    externalOrderId: platform !== 'Walk-in' ? trimmedExternalOrderId : '',
     order_type: isStoreSale ? 'store' : 'card',
     // Store sales are handed over and paid for on the spot — treat as
     // already complete, matching the "Completed" terminal pickup stage.
@@ -235,7 +259,14 @@ export async function createOrderFromCheckout({
     await deductIngredientsForOrder(resolvedMenuItems, { orderId: order._id, performedBy: staffName || paymentMethod });
   }
 
-  await order.save();
+  try {
+    await order.save();
+  } catch (err) {
+    if (err?.code === 11000 && err?.keyPattern?.externalOrderId) {
+      throw new CheckoutError(`A ${platform} order with ID "${trimmedExternalOrderId}" has already been recorded.`);
+    }
+    throw err;
+  }
 
   return { order, priced, paymentTag: PAYMENT_TAGS[paymentMethod] };
 }

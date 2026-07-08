@@ -68,7 +68,23 @@ const orderSchema = new mongoose.Schema({
   lunchBoxesUsed: { type: Number, default: 0 },
   mealsTotal: { type: Number, default: 0 },
   extrasTotal: { type: Number, default: 0 },
+
+  // ─── Platform Order Recording — third-party delivery platforms recorded
+  // manually at POS, with no API integration required. 'Walk-in' is the
+  // default for ordinary in-store sales; every other value requires an
+  // External Order ID (enforced in checkout.js). ──────────────────────
+  platform: { type: String, enum: ['Walk-in', 'Glovo', 'Chowdeck', 'Uber Eats', 'Other'], default: 'Walk-in' },
+  externalOrderId: { type: String, default: '', trim: true },
 }, { timestamps: true });
+
+// 🔒 Prevents the same platform + External Order ID from ever being
+// recorded twice (e.g. re-entering the same Glovo order by accident).
+// Partial index — only applies once externalOrderId is actually set, so
+// ordinary Walk-in orders (which never set it) are unaffected.
+orderSchema.index(
+  { platform: 1, externalOrderId: 1 },
+  { unique: true, partialFilterExpression: { externalOrderId: { $type: 'string', $ne: '' } } }
+);
 
 // ✅ Generates a genuinely unique, date-readable order ID — no shared
 // counter document involved, so there's nothing that can ever be

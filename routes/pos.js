@@ -39,7 +39,7 @@ router.post('/quote', async (req, res) => {
 // body: { cart: { mealPackages, extras }, paymentMethod, customerName, phone }
 router.post('/checkout', async (req, res) => {
   try {
-    const { cart, paymentMethod, customerName, phone, posSaleType, splitPayments } = req.body;
+    const { cart, paymentMethod, customerName, phone, posSaleType, splitPayments, platform, externalOrderId } = req.body;
     // ✅ Never take staff identity from the request body — always the
     // authenticated session, so staff never manually enter their own name.
     const staffName = req.user?.name || req.user?.email || 'Staff';
@@ -56,11 +56,14 @@ router.post('/checkout', async (req, res) => {
       phone,
       posSaleType,
       deliveryMethod: 'pickup', // in-store sale — no delivery zone involved
+      platform,
+      externalOrderId,
     });
 
+    const platformTag = platform && platform !== 'Walk-in' ? ` — ${platform} #${externalOrderId}` : '';
     createNotification({
       type: 'new_order',
-      message: `Store sale #${order.order_id} — ₦${order.totalAmount.toLocaleString()} (${paymentTag})`,
+      message: `Store sale #${order.order_id}${platformTag} — ₦${order.totalAmount.toLocaleString()} (${paymentTag})`,
       relatedId: order._id,
     });
 
