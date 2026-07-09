@@ -136,14 +136,28 @@ router.patch('/:id/permissions', protect, async (req, res) => {
     const role = await Role.findById(req.params.id);
     if (!role) return res.status(404).json({ message: 'Role not found' });
 
+    // ✅ Fix: rebuild the whole permissions object from scratch and
+    // reassign it, instead of mutating the existing Mongoose Map in place
+    // with .set(). Maps-of-subdocument-schemas don't always get picked up
+    // by save() when mutated via .set() — this sidesteps that entirely by
+    // replacing the field outright, plus an explicit markModified as a
+    // belt-and-braces guarantee.
+    const existing = role.permissions instanceof Map
+      ? Object.fromEntries(role.permissions)
+      : (role.permissions || {});
+    const merged = { ...existing };
+
     for (const [mod, actions] of Object.entries(permissions)) {
       if (!PERMISSION_MODULES.includes(mod)) continue; // silently ignore unknown modules
       const clean = {};
       for (const action of PERMISSION_ACTIONS) {
         clean[action] = !!actions?.[action];
       }
-      role.permissions.set(mod, clean);
+      merged[mod] = clean;
     }
+
+    role.permissions = merged;
+    role.markModified('permissions');
     await role.save();
 
     logAudit({
