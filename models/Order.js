@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import getNextSequence from '../utils/getNextSequence.js';
 
 const orderSchema = new mongoose.Schema({
   customerEmail: { type: String, required: true },
@@ -28,6 +29,13 @@ const orderSchema = new mongoose.Schema({
   freeDelivery: { type: Boolean, default: false },
   statusHistory: { type: Array, default: [] },
   order_id: { type: String, unique: true },            // will be auto‑generated
+  invoiceNumber: { type: String, unique: true, sparse: true }, // INV-000001 — always unique, assigned once at creation
+  // ✅ Manual discount — applied at POS by staff (e.g. loyalty, manager
+  // override). NOT automatic promo matching — that's a separate, larger
+  // feature (matching Promo rules against cart contents) not yet wired
+  // into checkout. This is deliberately simple: an amount + a label.
+  discount_amount: { type: Number, default: 0 },
+  discount_label: { type: String, default: '' },
   isDeleted: { type: Boolean, default: false },
   deletedAt: { type: Date, default: null },
 
@@ -132,6 +140,14 @@ orderSchema.pre('save', async function (next) {
       attempts++;
     }
     this.order_id = candidate;
+  }
+
+  // ✅ Invoice numbers — sequential, permanent, assigned exactly once at
+  // creation via the shared Counter collection. Applies to every order
+  // regardless of how it was created (POS, website, WhatsApp).
+  if (this.isNew && !this.invoiceNumber) {
+    const seq = await getNextSequence('invoiceNumber');
+    this.invoiceNumber = `INV-${String(seq).padStart(6, '0')}`;
   }
   next();
 });

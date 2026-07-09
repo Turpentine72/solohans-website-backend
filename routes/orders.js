@@ -117,6 +117,25 @@ router.get('/track', async (req, res) => {
   }
 });
 
+// ─── PUBLIC RECEIPT (no auth) ─────────────────────────
+// Keyed by the order's Mongo _id — a 24-char hex string, not the
+// sequential/guessable order_id — so a shared receipt link can't be used
+// to enumerate other customers' orders. Deliberately omits email/phone/
+// address; the admin-side Orders page already has full detail for staff.
+router.get('/receipt/:id', async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id).select(
+      'order_id invoiceNumber customerName createdAt items mealPackages storeExtras ' +
+      'items_subtotal discount_amount discount_label delivery_fee tax_rate tax_amount totalAmount ' +
+      'paymentMethod payment_status status platform externalOrderId staffNameSnapshot order_type isDeleted'
+    );
+    if (!order || order.isDeleted) return res.status(404).json({ message: 'Receipt not found' });
+    res.json(order);
+  } catch (err) {
+    res.status(404).json({ message: 'Receipt not found' });
+  }
+});
+
 // ─── CREATE ORDER (public) ───────────────────────────
 router.post('/', async (req, res) => {
   try {
