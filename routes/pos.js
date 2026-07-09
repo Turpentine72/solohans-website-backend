@@ -6,6 +6,7 @@ import { priceOrder, PricingError } from '../utils/pricing.js';
 import { assertStockAvailable, StockError } from '../utils/stockEngine.js';
 import Inventory from '../models/Inventory.js';
 import createNotification from '../utils/createNotification.js';
+import { sendPushToAdmins } from '../utils/push.js';
 
 const router = express.Router();
 
@@ -68,6 +69,12 @@ router.post('/checkout', async (req, res) => {
       message: `Store sale #${order.order_id}${platformTag} — ₦${order.totalAmount.toLocaleString()} (${paymentTag})`,
       relatedId: order._id,
     });
+
+    sendPushToAdmins({
+      title: platform && platform !== 'Walk-in' ? `New ${platform} Order` : 'New POS Sale',
+      body: `#${order.order_id}${platformTag} — ₦${order.totalAmount.toLocaleString()}`,
+      url: '/admin/pos',
+    }).catch((err) => console.error('Push notification error:', err));
 
     res.status(201).json({ order, paymentTag });
   } catch (err) {

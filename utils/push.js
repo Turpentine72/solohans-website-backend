@@ -7,7 +7,10 @@ import User from '../models/User.js';
 // anyway, but it already swallows its own errors internally.
 export async function sendPushToAdmins({ title, body, url }) {
   try {
-    const admins = await User.find({ role: 'admin', fcmTokens: { $exists: true, $ne: [] } });
+    const admins = await User.find({
+      $or: [{ role: 'admin' }, { isSuperAdmin: true }],
+      fcmTokens: { $exists: true, $ne: [] },
+    });
     const tokens = admins.flatMap(a => a.fcmTokens || []);
     if (tokens.length === 0) return;
 
@@ -27,7 +30,7 @@ export async function sendPushToAdmins({ title, body, url }) {
     });
     if (deadTokens.length > 0) {
       await User.updateMany(
-        { role: 'admin' },
+        { $or: [{ role: 'admin' }, { isSuperAdmin: true }] },
         { $pull: { fcmTokens: { $in: deadTokens } } }
       );
     }
