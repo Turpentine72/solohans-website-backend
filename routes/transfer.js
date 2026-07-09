@@ -1,8 +1,18 @@
 // routes/transfer.js
 import express from 'express';
 import axios from 'axios';
+import { protect, requireRole } from '../middleware/auth.js';
+import { logAudit } from '../utils/auditLog.js';
 
 const router = express.Router();
+
+// 🔒 SECURITY: this router moves real money via Paystack. Every route
+// below requires an authenticated Admin (or Super Admin). Previously this
+// entire router had NO auth middleware at all — any unauthenticated
+// request to /api/transfer/recipient or /api/transfer/transfer could
+// create a payout recipient and send a real bank transfer out of the
+// business's Paystack balance. This line is the fix.
+router.use(protect, requireRole('admin'));
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 const PAYSTACK_BASE = 'https://api.paystack.co';
@@ -35,6 +45,14 @@ router.post('/recipient', async (req, res) => {
       bank_code,
       currency,
     });
+
+    logAudit({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      action: 'Payout Recipient Created',
+      details: `Created transfer recipient "${name}" (${account_number})`,
+    });
+
     res.json({ success: true, data: data.data });
   } catch (error) {
     handleError(error, res);
@@ -55,6 +73,14 @@ router.post('/transfer', async (req, res) => {
       recipient: recipient_code,
       reason: reason || 'Payout',
     });
+
+    logAudit({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      action: 'Payout Transfer Initiated',
+      details: `Initiated transfer of ₦${amount.toLocaleString()} to recipient ${recipient_code}${reason ? ` — ${reason}` : ''}`,
+    });
+
     res.json({ success: true, data: data.data });
   } catch (error) {
     handleError(error, res);
@@ -72,6 +98,14 @@ router.post('/transfer/finalize', async (req, res) => {
       transfer_code,
       otp,
     });
+
+    logAudit({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      action: 'Payout Transfer Finalized',
+      details: `Finalized transfer ${transfer_code}`,
+    });
+
     res.json({ success: true, data: data.data });
   } catch (error) {
     handleError(error, res);
