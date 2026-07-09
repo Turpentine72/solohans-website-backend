@@ -51,6 +51,8 @@ export async function createOrderFromCheckout({
   markPaidImmediately = false,
   platform = 'Walk-in',      // 'Walk-in' | 'Glovo' | 'Chowdeck' | 'Uber Eats' | 'Other'
   externalOrderId = '',      // required for every non-Walk-in platform
+  discountAmount = 0,        // manual staff-applied discount — POS ('store') only, ignored for website
+  discountLabel = '',        // e.g. "Loyalty discount", "Manager override"
 }) {
   if (source === 'store' && !['CASH', 'TRANSFER', 'POS', 'SPLIT'].includes(paymentMethod)) {
     throw new CheckoutError('A payment method (Cash, Transfer, POS, or Split Payment) is required to complete a store sale.');
@@ -179,11 +181,24 @@ export async function createOrderFromCheckout({
 
   const itemsSubtotal = priced.mealsTotal + priced.extrasTotal + menuItemsTotal;
 
+  // ⚠️ Discounts can ONLY be applied on 'store' (POS) sales — the website
+  // checkout is public/unauthenticated, so honoring a client-supplied
+  // discount there would let anyone set their own price. This is a
+  // deliberate, hard restriction, not a default.
+  const isStoreSale = source === 'store';
+  let resolvedDiscountAmount = 0;
+  let resolvedDiscountLabel = '';
+  if (isStoreSale && Number(discountAmount) > 0) {
+    resolvedDiscountAmount = Math.min(Number(discountAmount), itemsSubtotal);
+    resolvedDiscountLabel = String(discountLabel || '').trim().slice(0, 80);
+  }
+  const discountedSubtotal = itemsSubtotal - resolvedDiscountAmount;
+
   const settings = await Settings.findOne();
   const taxEnabled = !!settings?.tax?.enabled;
   const taxRate = settings?.tax?.rate || 0;
-  const taxAmount = taxEnabled ? Math.round(itemsSubtotal * (taxRate / 100)) : 0;
-  const totalAmount = itemsSubtotal + taxAmount + (deliveryFeeSet ? deliveryFee : 0);
+  const taxAmount = taxEnabled ? Math.round(discountedSubtotal * (taxRate / 100)) : 0;
+  const totalAmount = discountedSubtotal + taxAmount + (deliveryFeeSet ? deliveryFee : 0);
 
   // ✅ Split Payment must add up to EXACTLY the order total — never trust
   // the client's own math, even though the POS UI already enforces this.
@@ -200,8 +215,6 @@ export async function createOrderFromCheckout({
     }
   }
 
-  const isStoreSale = source === 'store';
-
   const order = new Order({
     customerEmail: customerEmail || 'store-sale@solohans.local',
     customerName,
@@ -210,6 +223,8 @@ export async function createOrderFromCheckout({
     notes,
     items,
     items_subtotal: itemsSubtotal,
+    discount_amount: resolvedDiscountAmount,
+    discount_label: resolvedDiscountLabel,
     tax_enabled: taxEnabled,
     tax_rate: taxRate,
     tax_amount: taxAmount,
