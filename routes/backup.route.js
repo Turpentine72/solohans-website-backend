@@ -40,7 +40,12 @@ router.post('/manual', async (req, res) => {
     });
     res.status(201).json(backup);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    // ✅ Always log server-side — a backup failure with no trace in the
+    // logs is unfixable. Check Render's log viewer for this line if a
+    // backup fails; it'll show the real cause (Mongo error, GridFS error,
+    // out-of-memory, etc.) that the generic client-facing message can't.
+    console.error('❌ Manual backup failed:', err);
+    res.status(500).json({ message: err.message || 'Backup failed — check server logs for details.' });
   }
 });
 

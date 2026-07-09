@@ -227,11 +227,19 @@ export async function sendOrderStatusUpdate(order) {
     additionalInfo = `<p>✅ We hope you enjoyed your meal. Please leave us a review!</p>`;
   }
 
+  // A receipt only makes sense once payment is actually confirmed.
+  let receiptLine = '';
+  if (['Paid', 'Processing', 'Out for Delivery', 'Delivered'].includes(order.status)) {
+    const receiptUrl = `${(process.env.SITE_URL || "https://www.solohansdeliciousmeal.com.ng")}/receipt/${order._id}`;
+    receiptLine = `<p><a href="${receiptUrl}">View / Download Receipt</a></p>`;
+  }
+
   const content = `
     <h2>${statusText}</h2>
     <p><strong>Order #${orderNum}</strong></p>
     <p>Total: ₦${Number(order.totalAmount).toLocaleString()}</p>
     ${additionalInfo}
+    ${receiptLine}
     <p>Thank you for choosing Solohans!</p>
   `;
 
