@@ -2,7 +2,7 @@ import express from 'express';
 import { protect } from '../middleware/auth.js';
 import Settings from '../models/Settings.js';
 import { logAudit } from '../utils/auditLog.js';
-import Backup from '../models/Backup.js';
+import Backup from '../models/Backup.model.js';
 import { createBackup, listBackups, downloadStream, restoreBackup, BackupError } from '../utils/backupEngine.js';
 
 const router = express.Router();
