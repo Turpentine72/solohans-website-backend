@@ -33,6 +33,8 @@ import posRoutes from './routes/pos.js';
 import dashboardRoutes from './routes/dashboard.js';
 import paymentReconciliationRoutes from './routes/paymentReconciliation.js';
 import ingredientRoutes from './routes/ingredients.js';
+import backupRoutes from './routes/backup.js';
+import { maybeRunScheduledBackup } from './utils/backupEngine.js';
 
 const app = express();
 
@@ -98,6 +100,8 @@ app.use('/api/pos', posRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/payment-reconciliation', paymentReconciliationRoutes);
 app.use('/api/ingredients', ingredientRoutes);
+app.use('/api/backup', backupRoutes);
+console.log('[startup] registered route: /api/backup');
 
 // ─────────────────────────────────────────────────────────
 // Health Check
@@ -122,6 +126,19 @@ mongoose
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
+
+    // ✅ Automatic Backup — checked hourly, actually runs only when the
+    // configured daily/weekly/monthly interval has elapsed. Dependency-free
+    // (no cron package) since this business doesn't need sub-hour precision.
+    console.log('[backup-scheduler] initializing — will check every hour whether a scheduled backup is due');
+    const runScheduleCheck = () => {
+      console.log(`[backup-scheduler] running check at ${new Date().toISOString()}`);
+      maybeRunScheduledBackup()
+        .then(() => console.log('[backup-scheduler] check complete'))
+        .catch((err) => console.error('❌ [backup-scheduler] Scheduled backup check failed:', err));
+    };
+    runScheduleCheck();
+    setInterval(runScheduleCheck, 60 * 60 * 1000);
   })
   .catch((err) => {
     console.error('❌ MongoDB connection error:', err);
@@ -129,13 +146,40 @@ mongoose
   });
 
 // ─────────────────────────────────────────────────────────
+// 404 — must come after every route is registered, before the error
+// handler. Without this, a request to a route that genuinely doesn't
+// exist (e.g. a deploy missing a route file) falls through to Express's
+// own default HTML 404 page — which isn't JSON, and on the frontend
+// shows up as a generic, undiagnosable "API error" instead of clearly
+// saying which route was missing.
+app.use('/api', (req, res) => {
+  console.error(`❌ 404 — no route matched: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({ message: `No route matched ${req.method} ${req.originalUrl}. Check that this route is registered in server.js and was actually deployed.` });
+});
+
+// ─────────────────────────────────────────────────────────
 // Global Error Handler
 // ─────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
-  console.error(err);
+  // ✅ Always log the full error server-side (visible in Render logs) —
+  // previously this handler discarded err.message entirely and returned
+  // a hardcoded generic string, so any error that escaped a route's own
+  // try/catch was completely undiagnosable from the client-facing
+  // response. Now the real message is both logged AND returned.
+  console.error(`❌ Unhandled error on ${req.method} ${req.originalUrl}:`, err);
 
-  res.status(500).json({
+  res.status(err.status || 500).json({
     success: false,
-    message: 'Internal Server Error',
+    message: err.message || 'Internal Server Error',
   });
+});
+
+// ✅ Catch anything that escapes Express entirely (a truly unhandled
+// promise rejection or synchronous throw outside any request). Without
+// this, such an error crashes the process with no trace in the logs.
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ Unhandled promise rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught exception:', err);
 });
