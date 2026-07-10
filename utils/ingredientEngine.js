@@ -202,3 +202,24 @@ export async function listIngredients() {
   const list = await Ingredient.find().sort('label');
   return list.map((i) => i.toReport());
 }
+
+/**
+ * Reset Stock — corrects an ingredient's CURRENT remaining pieces to an
+ * exact, physically-counted value. Never touches the lifetime `piecesUsed`
+ * counter (sales history), only `initialPieces` is adjusted so that
+ * `remainingPieces()` becomes exactly the new count.
+ */
+export async function resetIngredientStock(id, newRemainingPieces) {
+  const target = Number(newRemainingPieces);
+  if (!Number.isFinite(target) || target < 0) {
+    throw new IngredientStockError('New stock count must be zero or a positive number.');
+  }
+  const ingredient = await Ingredient.findById(id);
+  if (!ingredient) throw new IngredientStockError('Ingredient not found.');
+
+  const previousRemaining = ingredient.remainingPieces();
+  ingredient.initialPieces = ingredient.piecesUsed + target;
+  await ingredient.save();
+
+  return { report: ingredient.toReport(), previousRemaining, newRemaining: target };
+}

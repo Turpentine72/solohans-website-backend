@@ -119,6 +119,58 @@ export async function restock(item, quantity, { reason = '', performedBy = '' } 
   return inv;
 }
 
+/**
+ * Reset Stock — corrects the CURRENT remaining stock to an exact,
+ * physically-counted value (e.g. after a stock count or to fix a mistake).
+ * Deliberately never touches the permanent `sold` counter, so lifetime
+ * sales history and analytics are never affected — only `totalAdded` is
+ * adjusted so that `remaining` becomes exactly `newRemaining`.
+ * item one of: jollof, friedRice, spaghettiPlastics, lunchBoxes, extraPlastics, extras:<key>
+ */
+export async function resetStock(item, newRemaining, { reason = '', performedBy = '' } = {}) {
+  const target = Number(newRemaining);
+  if (!Number.isFinite(target) || target < 0) throw new StockError('New stock count must be zero or a positive number.');
+
+  const inv = await Inventory.getSingleton();
+  let entry, previousRemaining;
+
+  if (item.startsWith('extras:')) {
+    const key = item.split(':')[1];
+    entry = inv.extras.get(key);
+    if (!entry) throw new StockError(`Unknown extra item: ${key}`);
+    previousRemaining = remaining(entry);
+    entry.totalAdded = entry.sold + target;
+    inv.extras.set(key, entry);
+  } else if (['jollof', 'friedRice', 'spaghettiPlastics', 'lunchBoxes', 'extraPlastics'].includes(item)) {
+    entry = inv[item];
+    previousRemaining = remaining(entry);
+    entry.totalAdded = entry.sold + target;
+  } else {
+    throw new StockError(`Unknown inventory item: ${item}`);
+  }
+
+  await inv.save();
+  await StockMovement.create({
+    type: 'reset', item, quantity: target - previousRemaining, reason, performedBy,
+    previousValue: previousRemaining, newValue: target,
+  });
+  return inv;
+}
+
+/** Deletes a standalone extra item type entirely. Blocks deletion if it still has stock, to force an explicit reset-to-zero first (an audit trail should show WHY stock went to zero before the item disappears). */
+export async function deleteExtra(key, { reason = '', performedBy = '' } = {}) {
+  const inv = await Inventory.getSingleton();
+  const entry = inv.extras.get(key);
+  if (!entry) throw new StockError(`Unknown extra item: ${key}`);
+  const rem = remaining(entry);
+  if (rem > 0) {
+    throw new StockError(`Reset stock to 0 before deleting "${entry.label}" — it currently has ${rem} remaining.`);
+  }
+  inv.extras.delete(key);
+  await inv.save();
+  await StockMovement.create({ type: 'adjustment', item: `extras:${key}`, quantity: 0, reason: reason || `Deleted "${entry.label}"`, performedBy });
+}
+
 export function inventorySnapshot(inv) {
   const extras = {};
   for (const [key, entry] of inv.extras.entries()) {

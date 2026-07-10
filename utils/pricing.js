@@ -25,6 +25,7 @@ export const PROTEIN_PRICES = {
   none: 3000,
   regularChicken: 4500,
   bigChicken: 5500,
+  extraBigChicken: 6500,
   regularTurkey: 6500,
   bigTurkey: 8500,
 };
@@ -33,20 +34,28 @@ export const PROTEIN_LABELS = {
   none: 'Meal Only',
   regularChicken: 'Regular Chicken',
   bigChicken: 'Big Chicken',
+  extraBigChicken: 'Extra Big Chicken',
   regularTurkey: 'Regular Turkey',
   bigTurkey: 'Big Turkey',
 };
+
+// ✅ Chicken and Turkey are deliberately separate groups — never combined
+// into one flat list — so the UI can render two clearly labeled sections.
+export const CHICKEN_PROTEINS = ['none', 'regularChicken', 'bigChicken', 'extraBigChicken'];
+export const TURKEY_PROTEINS = ['regularTurkey', 'bigTurkey'];
 
 export const EXTRA_PORTION_PRICE = 1500;
 
 // Default catalog for standalone extras (admin can override prices via /api/inventory)
 export const DEFAULT_EXTRAS_CATALOG = {
-  hotdog: { label: 'Hotdog', price: 1000, usesPlastic: false },
+  hotdog: { label: 'Hotdog', price: 500, usesPlastic: false },
   water: { label: 'Water', price: 500, usesPlastic: false },
   drinks: { label: 'Drinks', price: 1000, usesPlastic: false },
-  plantain: { label: 'Plantain', price: 1000, usesPlastic: true },
+  plantainSmall: { label: 'Plantain Small', price: 1000, usesPlastic: true },
+  plantainBig: { label: 'Plantain Big', price: 2000, usesPlastic: true },
+  coleslawSmall: { label: 'Coleslaw Small', price: 1000, usesPlastic: true },
+  coleslawBig: { label: 'Coleslaw Big', price: 2000, usesPlastic: true },
   salad: { label: 'Salad', price: 1000, usesPlastic: true },
-  coleslaw: { label: 'Coleslaw', price: 1000, usesPlastic: true },
 };
 
 export class PricingError extends Error {}
