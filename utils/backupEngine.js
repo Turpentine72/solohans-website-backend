@@ -24,7 +24,7 @@ import Counter from '../models/Counter.js';
 import AuditLog from '../models/AuditLog.js';
 import Contact from '../models/Contact.js';
 import Gallery from '../models/Gallery.js';
-import Backup from '../models/Backup.js';
+import Backup from '../models/Backup.model.js';
 
 const gzip = promisify(zlib.gzip);
 const gunzip = promisify(zlib.gunzip);
