@@ -1,6 +1,6 @@
 import express from 'express';
 import Contact from '../models/Contact.js';
-import { protect } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 import { sendContactAlertToAdmin, sendContactReplyToClient } from '../utils/emailTemplates.js';
 import createNotification from '../utils/createNotification.js';
 
@@ -28,7 +28,7 @@ router.post('/', async (req, res) => {
 });
 
 // GET all contacts (admin only)
-router.get('/', protect, async (req, res) => {
+router.get('/', protect, requirePermission('contacts', 'view'), async (req, res) => {
   try {
     res.json(await Contact.find().sort({ createdAt: -1 }));
   } catch (err) {
@@ -37,7 +37,7 @@ router.get('/', protect, async (req, res) => {
 });
 
 // PATCH reply (admin replies)
-router.patch('/:id/reply', protect, async (req, res) => {
+router.patch('/:id/reply', protect, requirePermission('contacts', 'edit'), async (req, res) => {
   try {
     const contact = await Contact.findByIdAndUpdate(
       req.params.id,
@@ -57,7 +57,7 @@ router.patch('/:id/reply', protect, async (req, res) => {
 });
 
 // DELETE a contact message (admin only)
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, requirePermission('contacts', 'delete'), async (req, res) => {
   try {
     const contact = await Contact.findByIdAndDelete(req.params.id);
     if (!contact) return res.status(404).json({ message: 'Contact not found' });

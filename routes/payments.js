@@ -3,7 +3,7 @@ import axios from 'axios';
 import Order from '../models/Order.js';
 import createNotification from '../utils/createNotification.js';
 import { sendPaymentAlertToAdmin, sendOrderStatusUpdate } from '../utils/emailTemplates.js';
-import { protect } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 
 const router = express.Router();
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
@@ -91,7 +91,7 @@ router.post('/verify', async (req, res) => {
 // system never recorded (e.g. the customer's automatic verify call never
 // reached us due to a network issue). Admin finds the reference in their
 // own Paystack dashboard and pastes it here. ──────────────────────────────
-router.post('/admin-verify', protect, async (req, res) => {
+router.post('/admin-verify', protect, requirePermission('payment_verification', 'approve'), async (req, res) => {
   const { reference, orderId } = req.body;
   if (!reference || !orderId) {
     return res.status(400).json({ success: false, message: 'reference and orderId required' });

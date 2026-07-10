@@ -6,13 +6,19 @@ import { logAudit } from '../utils/auditLog.js';
 
 const router = express.Router();
 
-// 🔒 SECURITY: this router moves real money via Paystack. Every route
-// below requires an authenticated Admin (or Super Admin). Previously this
-// entire router had NO auth middleware at all — any unauthenticated
-// request to /api/transfer/recipient or /api/transfer/transfer could
-// create a payout recipient and send a real bank transfer out of the
-// business's Paystack balance. This line is the fix.
-router.use(protect, requireRole('admin'));
+// 🔒 SECURITY: this router moves real money via Paystack. Restricted to
+// Super Admin specifically — NOT just role:'admin' — because those are
+// deliberately different tiers in this app (multiple staff can hold
+// role:'admin' without being flagged Super Admin, and role:'admin'
+// already gets full access to every grantable permission by design, which
+// is too broad a bar for irreversible real-money transfers). Matches the
+// same reasoning as Backup & Restore.
+router.use(protect, (req, res, next) => {
+  if (!req.user?.isSuperAdmin) {
+    return res.status(403).json({ message: 'Only a Super Admin can manage payouts.' });
+  }
+  next();
+});
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 const PAYSTACK_BASE = 'https://api.paystack.co';

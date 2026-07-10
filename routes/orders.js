@@ -1,6 +1,6 @@
 import express from 'express';
 import Order from '../models/Order.js';
-import { protect, requireRole } from '../middleware/auth.js';
+import { protect, requireRole, requirePermission } from '../middleware/auth.js';
 import {
   sendOrderStatusUpdate,
   sendPaymentAlertToAdmin,
@@ -258,7 +258,7 @@ router.post('/', async (req, res) => {
 
 // ─── MARK AS PAID (public – called after Paystack) ────
 // ─── ADMIN: MARK PAID (locks verification permanently) ──────────────
-router.patch('/:id/payment', protect, requireRole('admin', 'cashier'), async (req, res) => {
+router.patch('/:id/payment', protect, requirePermission('orders', 'edit'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
@@ -325,7 +325,7 @@ router.get('/payment-info', async (req, res) => {
 });
 
 // ─── ADMIN: GET ALL (exclude deleted by default, ?deleted=true to include) ──
-router.get('/', protect, async (req, res) => {
+router.get('/', protect, requirePermission('orders', 'view'), async (req, res) => {
   try {
     // ✅ Automatic 7-day archiving — runs quietly before every fetch, so
     // completed orders age out of the main Orders view on their own.
@@ -347,7 +347,7 @@ router.get('/', protect, async (req, res) => {
 // Lists pending online orders that any logged-in staff member can claim.
 // Must be registered BEFORE '/:id' below, or Express would treat
 // "website-pending" as an :id and this would never be reached.
-router.get('/website-pending', protect, async (req, res) => {
+router.get('/website-pending', protect, requirePermission('orders', 'view'), async (req, res) => {
   try {
     const orders = await Order.find({
       isDeleted: false,
@@ -361,7 +361,7 @@ router.get('/website-pending', protect, async (req, res) => {
   }
 });
 
-router.get('/:id', protect, async (req, res) => {
+router.get('/:id', protect, requirePermission('orders', 'view'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Not found' });
@@ -372,7 +372,7 @@ router.get('/:id', protect, async (req, res) => {
 });
 
 // ─── ADMIN: UPDATE STATUS ───────────────────────────
-router.patch('/:id/status', protect, requireRole('admin', 'cashier', 'chef', 'delivery_staff'), async (req, res) => {
+router.patch('/:id/status', protect, requirePermission('orders', 'edit'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Order not found' });
@@ -467,7 +467,7 @@ router.patch('/:id/status', protect, requireRole('admin', 'cashier', 'chef', 'de
 });
 
 // ─── ADMIN: UPDATE DELIVERY FEE ─────────────────────
-router.patch('/:id/delivery-fee', protect, requireRole('admin', 'cashier'), async (req, res) => {
+router.patch('/:id/delivery-fee', protect, requirePermission('orders', 'edit'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Not found' });
@@ -497,7 +497,7 @@ router.patch('/:id/delivery-fee', protect, requireRole('admin', 'cashier'), asyn
 });
 
 // ─── ADMIN: SOFT DELETE ─────────────────────────────
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, requirePermission('orders', 'delete'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Not found' });
@@ -511,7 +511,7 @@ router.delete('/:id', protect, async (req, res) => {
 });
 
 // ─── ADMIN: RESTORE ─────────────────────────────────
-router.patch('/:id/restore', protect, async (req, res) => {
+router.patch('/:id/restore', protect, requirePermission('orders', 'delete'), async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
     if (!order) return res.status(404).json({ message: 'Not found' });
@@ -524,8 +524,20 @@ router.patch('/:id/restore', protect, async (req, res) => {
   }
 });
 
-// ─── ADMIN: PERMANENT DELETE ────────────────────────
-router.delete('/:id/permanent', protect, async (req, res) => {
+// ─── SUPER ADMIN: PERMANENT DELETE ──────────────────
+// ⚠️ This previously had NO role/permission check at all beyond being
+// logged in, despite the comment claiming "admin only" — any authenticated
+// user, including the lowest-privilege role, could permanently destroy an
+// order record. Restricted to Super Admin specifically, matching the same
+// reasoning as Backup & Restore and Payouts: irreversible actions get the
+// strictest tier, not just the general 'orders' permission (which
+// role:'admin' gets in full by default).
+router.delete('/:id/permanent', protect, (req, res, next) => {
+  if (!req.user?.isSuperAdmin) {
+    return res.status(403).json({ message: 'Only a Super Admin can permanently delete an order.' });
+  }
+  next();
+}, async (req, res) => {
   try {
     await Order.findByIdAndDelete(req.params.id);
     res.json({ message: 'Permanently deleted' });
@@ -535,7 +547,7 @@ router.delete('/:id/permanent', protect, async (req, res) => {
 });
 
 // ─── Tag to Me — a staff member claims a pending website order ─────────
-router.patch('/:id/tag-to-me', protect, async (req, res) => {
+router.patch('/:id/tag-to-me', protect, requirePermission('orders', 'edit'), async (req, res) => {
   try {
     const shift = await getActiveShift(req.user.id);
     if (!shift) return res.status(400).json({ message: 'You need to Start Work before tagging orders.' });
@@ -565,7 +577,7 @@ router.patch('/:id/tag-to-me', protect, async (req, res) => {
 });
 
 // ─── Admin: reassign (or clear) a tagged order ──────────────────────────
-router.patch('/:id/reassign', protect, requireRole('admin'), async (req, res) => {
+router.patch('/:id/reassign', protect, requirePermission('orders', 'manage'), async (req, res) => {
   try {
     const { staffId, staffName } = req.body; // omit both to clear the tag entirely
     const order = await Order.findById(req.params.id);

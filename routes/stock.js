@@ -1,6 +1,6 @@
 import express from 'express';
 import MenuItem from '../models/MenuItem.js';
-import { protect, requireRole } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
 import { getOrCreateTodayStock } from '../utils/stockDeduction.js';
 
@@ -8,7 +8,7 @@ const router = express.Router();
 
 // View today's stock — admin, storekeeper, and cashier can all see it
 // (cashier needs visibility into sales/remaining stock to do their job).
-router.get('/today', protect, requireRole('admin', 'storekeeper', 'cashier'), async (req, res) => {
+router.get('/today', protect, requirePermission('daily_stock', 'view'), async (req, res) => {
   try {
     const stock = await getOrCreateTodayStock();
     res.json(stock);
@@ -18,7 +18,7 @@ router.get('/today', protect, requireRole('admin', 'storekeeper', 'cashier'), as
 });
 
 // Set opening stock for the day — admin and storekeeper only.
-router.post('/opening', protect, requireRole('admin', 'storekeeper'), async (req, res) => {
+router.post('/opening', protect, requirePermission('daily_stock', 'manage'), async (req, res) => {
   try {
     const { items } = req.body; // [{ menuItemId, openingStock }]
     if (!Array.isArray(items)) {

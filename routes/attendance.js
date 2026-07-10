@@ -1,6 +1,6 @@
 import express from 'express';
 import Attendance from '../models/Attendance.js';
-import { protect, requireRole } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
 import { getShiftSummary } from '../utils/shiftHelper.js';
 
@@ -101,7 +101,7 @@ router.post('/check-out', protect, async (req, res) => {
 });
 
 // ─── Admin: Staff History with filters ──────────────────────────────────────
-router.get('/history', protect, requireRole('admin'), async (req, res) => {
+router.get('/history', protect, requirePermission('staff_history', 'view'), async (req, res) => {
   try {
     const { date, role, status, staffId, paymentMethod } = req.query;
     const filter = {};

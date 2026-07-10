@@ -1,13 +1,13 @@
 import express from 'express';
 import Expense from '../models/Expense.js';
-import { protect, requireRole } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
 
 const router = express.Router();
 
 // admin and closing_staff can manage expenses — matches the "Daily Closing →
 // Expenses" responsibility from the closing staff role spec.
-router.use(protect, requireRole('admin', 'closing_staff'));
+router.use(protect, requirePermission('expenses', 'view'));
 
 // ─── List expenses (optionally filtered by date range) ────────────────────
 router.get('/', async (req, res) => {
@@ -27,7 +27,7 @@ router.get('/', async (req, res) => {
 });
 
 // ─── Create an expense ─────────────────────────────────────────────────────
-router.post('/', async (req, res) => {
+router.post('/', requirePermission('expenses', 'create'), async (req, res) => {
   try {
     const { date, category, amount, description } = req.body;
     if (!category || !amount) {
@@ -55,7 +55,7 @@ router.post('/', async (req, res) => {
 });
 
 // ─── Update an expense ─────────────────────────────────────────────────────
-router.put('/:id', async (req, res) => {
+router.put('/:id', requirePermission('expenses', 'edit'), async (req, res) => {
   try {
     const { date, category, amount, description } = req.body;
     const expense = await Expense.findByIdAndUpdate(
@@ -71,7 +71,7 @@ router.put('/:id', async (req, res) => {
 });
 
 // ─── Delete an expense — admin only ────────────────────────────────────────
-router.delete('/:id', requireRole('admin'), async (req, res) => {
+router.delete('/:id', requirePermission('expenses', 'delete'), async (req, res) => {
   try {
     await Expense.findByIdAndDelete(req.params.id);
     res.json({ message: 'Expense deleted' });

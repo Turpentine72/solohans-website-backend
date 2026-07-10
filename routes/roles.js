@@ -1,5 +1,5 @@
 import express from 'express';
-import Role, { PERMISSION_MODULES, PERMISSION_ACTIONS } from '../models/Role.js';
+import Role, { PERMISSION_MODULES, PERMISSION_ACTIONS, defaultPermissionsFor } from '../models/Role.js';
 import User from '../models/User.js';
 import { protect, requireRole, requirePermission } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
@@ -24,13 +24,54 @@ async function ensureBuiltInRoles() {
     const existing = await Role.findOne({ name: role.name });
     if (!existing) {
       // New install / first time seeing this role — 'admin' gets full
-      // permissions on every module by default, so nothing changes for
-      // existing admin accounts the moment this RBAC system ships.
-      const permissions = role.name === 'admin' ? fullPermissions() : {};
+      // permissions on every module, other built-ins get a sensible
+      // starter preset (see DEFAULT_ROLE_PRESETS) so they aren't locked
+      // out of their own job on day one. Both remain fully editable by a
+      // Super Admin afterward.
+      const permissions = role.name === 'admin' ? fullPermissions() : defaultPermissionsFor(role.name);
       await Role.create({ ...role, builtIn: true, permissions });
     } else if (!existing.builtIn) {
       existing.builtIn = true;
       await existing.save();
+    }
+
+    // ✅ Backfill: if this built-in role already existed (e.g. from before
+    // this RBAC expansion) and is missing a module that now has a preset
+    // for it, add just that module — never touching any module a Super
+    // Admin has already explicitly configured, existing or not.
+    if (existing && role.name !== 'admin') {
+      const preset = defaultPermissionsFor(role.name);
+      const existingPerms = existing.permissions instanceof Map ? Object.fromEntries(existing.permissions) : (existing.permissions || {});
+      let changed = false;
+      for (const [mod, perms] of Object.entries(preset)) {
+        if (!existingPerms[mod]) {
+          existingPerms[mod] = perms;
+          changed = true;
+        }
+      }
+      if (changed) {
+        existing.permissions = existingPerms;
+        existing.markModified('permissions');
+        await existing.save();
+      }
+    }
+
+    // Admin always gets full access to every module, including any newly
+    // added ones this rebuild introduces — never partially configured.
+    if (existing && role.name === 'admin') {
+      const existingPerms = existing.permissions instanceof Map ? Object.fromEntries(existing.permissions) : (existing.permissions || {});
+      let changed = false;
+      for (const mod of PERMISSION_MODULES) {
+        if (!existingPerms[mod]) {
+          existingPerms[mod] = Object.fromEntries(PERMISSION_ACTIONS.map((a) => [a, true]));
+          changed = true;
+        }
+      }
+      if (changed) {
+        existing.permissions = existingPerms;
+        existing.markModified('permissions');
+        await existing.save();
+      }
     }
   }
 

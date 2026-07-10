@@ -17,6 +17,7 @@ const PAYMENT_TAGS = {
   POS: 'POS',
   SPLIT: 'SPLIT PAYMENT',
   'WEBSITE PAYMENT': 'WEBSITE PAYMENT',
+  PLATFORM: 'PLATFORM PAYMENT',
 };
 
 /**
@@ -54,26 +55,6 @@ export async function createOrderFromCheckout({
   discountAmount = 0,        // manual staff-applied discount — POS ('store') only, ignored for website
   discountLabel = '',        // e.g. "Loyalty discount", "Manager override"
 }) {
-  if (source === 'store' && !['CASH', 'TRANSFER', 'POS', 'SPLIT'].includes(paymentMethod)) {
-    throw new CheckoutError('A payment method (Cash, Transfer, POS, or Split Payment) is required to complete a store sale.');
-  }
-  if (source === 'store' && paymentMethod === 'SPLIT') {
-    if (!Array.isArray(splitPayments) || splitPayments.length < 1) {
-      throw new CheckoutError('Add at least one payment entry for a split payment.');
-    }
-    for (const entry of splitPayments) {
-      if (!['CASH', 'TRANSFER', 'POS'].includes(entry.method)) {
-        throw new CheckoutError('Each split payment entry must use Cash, Transfer, or POS.');
-      }
-      if (!(Number(entry.amount) > 0)) {
-        throw new CheckoutError('Each split payment entry must have an amount greater than ₦0.');
-      }
-    }
-  }
-  if (source === 'store' && !['shop', 'restaurant'].includes(posSaleType)) {
-    throw new CheckoutError('Select an Order Type (Shop Sale or Restaurant Sale) to complete this sale.');
-  }
-
   // ✅ Platform Order Recording — third-party platforms are logged manually
   // at POS (no API integration). Every platform other than Walk-in requires
   // a real External Order ID, and that ID can never be reused for the same
@@ -82,14 +63,48 @@ export async function createOrderFromCheckout({
   if (!VALID_PLATFORMS.includes(platform)) {
     throw new CheckoutError('Select a valid order platform.');
   }
+  const isThirdPartyPlatform = platform !== 'Walk-in';
   const trimmedExternalOrderId = String(externalOrderId || '').trim();
-  if (platform !== 'Walk-in') {
+  if (isThirdPartyPlatform) {
     if (!trimmedExternalOrderId) {
       throw new CheckoutError(`${platform} Order ID is required for a ${platform} order.`);
     }
     const duplicate = await Order.findOne({ platform, externalOrderId: trimmedExternalOrderId, isDeleted: { $ne: true } });
     if (duplicate) {
       throw new CheckoutError(`A ${platform} order with ID "${trimmedExternalOrderId}" has already been recorded (Order #${duplicate.order_id}).`);
+    }
+  }
+
+  // ✅ Third-party delivery platforms (Glovo, Chowdeck, any future platform)
+  // have already collected payment from the customer directly — there is
+  // nothing to reconcile in cash/transfer/POS at this register. So for
+  // these orders specifically: skip the payment-method requirement
+  // entirely (forced to a dedicated 'PLATFORM' tag instead of asking the
+  // cashier to pick one), and skip the Order Type choice too, since a
+  // delivery-platform order isn't a dine-in/shop distinction — it defaults
+  // to 'shop'. A Walk-in sale still requires both, unchanged.
+  if (source === 'store' && isThirdPartyPlatform) {
+    paymentMethod = 'PLATFORM';
+    if (!posSaleType) posSaleType = 'shop';
+  } else {
+    if (source === 'store' && !['CASH', 'TRANSFER', 'POS', 'SPLIT'].includes(paymentMethod)) {
+      throw new CheckoutError('A payment method (Cash, Transfer, POS, or Split Payment) is required to complete a store sale.');
+    }
+    if (source === 'store' && paymentMethod === 'SPLIT') {
+      if (!Array.isArray(splitPayments) || splitPayments.length < 1) {
+        throw new CheckoutError('Add at least one payment entry for a split payment.');
+      }
+      for (const entry of splitPayments) {
+        if (!['CASH', 'TRANSFER', 'POS'].includes(entry.method)) {
+          throw new CheckoutError('Each split payment entry must use Cash, Transfer, or POS.');
+        }
+        if (!(Number(entry.amount) > 0)) {
+          throw new CheckoutError('Each split payment entry must have an amount greater than ₦0.');
+        }
+      }
+    }
+    if (source === 'store' && !['shop', 'restaurant'].includes(posSaleType)) {
+      throw new CheckoutError('Select an Order Type (Shop Sale or Restaurant Sale) to complete this sale.');
     }
   }
 

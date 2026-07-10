@@ -1,7 +1,7 @@
 // backend/routes/paymentReconciliation.js
 import express from 'express';
 import mongoose from 'mongoose';
-import { protect, requireRole } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 import Order from '../models/Order.js';
 
 const dailyCloseSchema = new mongoose.Schema({
@@ -22,7 +22,7 @@ const PaymentDailyClose = mongoose.models.PaymentDailyClose || mongoose.model('P
 
 const router = express.Router();
 
-router.use(protect, requireRole('admin', 'storekeeper', 'cashier', 'closing_staff'));
+router.use(protect, requirePermission('payment_reconciliation', 'view'));
 
 function todayKey() {
   const d = new Date();
@@ -34,12 +34,23 @@ async function expectedTotalsForToday() {
   since.setHours(0, 0, 0, 0);
   const orders = await Order.find({ isDeleted: false, payment_status: 'paid', createdAt: { $gte: since } });
 
-  const expected = { cashTotal: 0, transferTotal: 0, posTotal: 0, websitePaymentTotal: 0 };
+  const expected = { cashTotal: 0, transferTotal: 0, posTotal: 0, websitePaymentTotal: 0, platformTotal: 0, platformBreakdown: {} };
   orders.forEach((o) => {
     if (o.paymentMethod === 'CASH') expected.cashTotal += o.totalAmount || 0;
     else if (o.paymentMethod === 'TRANSFER') expected.transferTotal += o.totalAmount || 0;
     else if (o.paymentMethod === 'POS') expected.posTotal += o.totalAmount || 0;
     else if (o.paymentMethod === 'WEBSITE PAYMENT') expected.websitePaymentTotal += o.totalAmount || 0;
+    else if (o.paymentMethod === 'PLATFORM') {
+      // ✅ Third-party platform orders (Glovo, Chowdeck, etc.) — payment
+      // was already collected by the platform, so there's nothing to
+      // reconcile in the cash drawer for these. Still shown as its own
+      // visible line, broken down by platform, so this revenue is never
+      // invisible from the day's closing report — just not mixed into
+      // cash/transfer/POS reconciliation math where it doesn't belong.
+      expected.platformTotal += o.totalAmount || 0;
+      const key = o.platform || 'Other';
+      expected.platformBreakdown[key] = (expected.platformBreakdown[key] || 0) + (o.totalAmount || 0);
+    }
     else if (o.paymentMethod === 'SPLIT') {
       (o.splitPayments || []).forEach((sp) => {
         if (sp.method === 'CASH') expected.cashTotal += sp.amount || 0;
@@ -48,7 +59,7 @@ async function expectedTotalsForToday() {
       });
     }
   });
-  expected.totalSales = expected.cashTotal + expected.transferTotal + expected.posTotal + expected.websitePaymentTotal;
+  expected.totalSales = expected.cashTotal + expected.transferTotal + expected.posTotal + expected.websitePaymentTotal + expected.platformTotal;
   return expected;
 }
 
@@ -64,7 +75,7 @@ router.get('/expected', async (req, res) => {
 });
 
 // ─── POST close the day with staff-counted actual amounts ────────
-router.post('/close-day', async (req, res) => {
+router.post('/close-day', requirePermission('payment_reconciliation', 'create'), async (req, res) => {
   try {
     const date = todayKey();
     const existing = await PaymentDailyClose.findOne({ date });

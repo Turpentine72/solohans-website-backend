@@ -1,6 +1,6 @@
 import express from 'express';
 import Review from '../models/Review.js';
-import { protect } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 import {
   sendNewReviewAlertToAdmin,
   sendAutoReplyToReviewer,
@@ -50,7 +50,7 @@ router.post('/', async (req, res) => {
 });
 
 // PATCH status (admin only)
-router.patch('/:id/status', protect, async (req, res) => {
+router.patch('/:id/status', protect, requirePermission('reviews', 'approve'), async (req, res) => {
   try {
     res.json(await Review.findByIdAndUpdate(
       req.params.id,
@@ -63,7 +63,7 @@ router.patch('/:id/status', protect, async (req, res) => {
 });
 
 // PATCH featured (admin only)
-router.patch('/:id/featured', protect, async (req, res) => {
+router.patch('/:id/featured', protect, requirePermission('reviews', 'edit'), async (req, res) => {
   try {
     res.json(await Review.findByIdAndUpdate(
       req.params.id,
@@ -76,7 +76,7 @@ router.patch('/:id/featured', protect, async (req, res) => {
 });
 
 // PATCH reply (admin replies to a review)
-router.patch('/:id/reply', protect, async (req, res) => {
+router.patch('/:id/reply', protect, requirePermission('reviews', 'edit'), async (req, res) => {
   try {
     const review = await Review.findByIdAndUpdate(
       req.params.id,
@@ -97,7 +97,7 @@ router.patch('/:id/reply', protect, async (req, res) => {
 });
 
 // ✅ NEW: Generic update for all fields (admin – used for adding images, editing text, etc.)
-router.patch('/:id', protect, async (req, res) => {
+router.patch('/:id', protect, requirePermission('reviews', 'edit'), async (req, res) => {
   try {
     const review = await Review.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!review) return res.status(404).json({ message: 'Not found' });
@@ -108,7 +108,7 @@ router.patch('/:id', protect, async (req, res) => {
 });
 
 // DELETE
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, requirePermission('reviews', 'delete'), async (req, res) => {
   try {
     await Review.findByIdAndDelete(req.params.id);
     res.json({ message: 'Deleted' });

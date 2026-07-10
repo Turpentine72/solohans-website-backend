@@ -1,6 +1,6 @@
 import express from 'express';
 import DeliveryZone from '../models/DeliveryZone.js';
-import { protect } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -15,7 +15,7 @@ router.get('/active', async (req, res) => {
 });
 
 // Admin – all zones (including inactive)
-router.get('/', protect, async (req, res) => {
+router.get('/', protect, requirePermission('delivery_zones', 'view'), async (req, res) => {
   try {
     const zones = await DeliveryZone.find().sort('name');
     res.json(zones);
@@ -25,7 +25,7 @@ router.get('/', protect, async (req, res) => {
 });
 
 // Admin – create
-router.post('/', protect, async (req, res) => {
+router.post('/', protect, requirePermission('delivery_zones', 'create'), async (req, res) => {
   try {
     const zone = await DeliveryZone.create(req.body);
     res.status(201).json(zone);
@@ -35,7 +35,7 @@ router.post('/', protect, async (req, res) => {
 });
 
 // Admin – update
-router.put('/:id', protect, async (req, res) => {
+router.put('/:id', protect, requirePermission('delivery_zones', 'edit'), async (req, res) => {
   try {
     const zone = await DeliveryZone.findByIdAndUpdate(req.params.id, req.body, { new: true });
     if (!zone) return res.status(404).json({ message: 'Zone not found' });
@@ -46,7 +46,7 @@ router.put('/:id', protect, async (req, res) => {
 });
 
 // Admin – toggle active
-router.patch('/:id/toggle', protect, async (req, res) => {
+router.patch('/:id/toggle', protect, requirePermission('delivery_zones', 'edit'), async (req, res) => {
   try {
     const zone = await DeliveryZone.findById(req.params.id);
     if (!zone) return res.status(404).json({ message: 'Zone not found' });
@@ -59,7 +59,7 @@ router.patch('/:id/toggle', protect, async (req, res) => {
 });
 
 // Admin – delete
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, requirePermission('delivery_zones', 'delete'), async (req, res) => {
   try {
     await DeliveryZone.findByIdAndDelete(req.params.id);
     res.json({ message: 'Deleted' });

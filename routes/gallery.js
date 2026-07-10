@@ -1,6 +1,6 @@
 import express from 'express';
 import Gallery from '../models/Gallery.js';
-import { protect } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
 });
 
 // Admin – get all images
-router.get('/admin', protect, async (req, res) => {
+router.get('/admin', protect, requirePermission('gallery', 'view'), async (req, res) => {
   try {
     const images = await Gallery.find().sort('-createdAt');
     res.json(images);
@@ -25,7 +25,7 @@ router.get('/admin', protect, async (req, res) => {
 });
 
 // Admin – create
-router.post('/', protect, async (req, res) => {
+router.post('/', protect, requirePermission('gallery', 'create'), async (req, res) => {
   try {
     const { image, caption } = req.body;
     const galleryItem = await Gallery.create({ image, caption });
@@ -36,7 +36,7 @@ router.post('/', protect, async (req, res) => {
 });
 
 // Admin – update (toggle active or update caption)
-router.patch('/:id', protect, async (req, res) => {
+router.patch('/:id', protect, requirePermission('gallery', 'edit'), async (req, res) => {
   try {
     const item = await Gallery.findByIdAndUpdate(req.params.id, req.body, { new: true });
     res.json(item);
@@ -46,7 +46,7 @@ router.patch('/:id', protect, async (req, res) => {
 });
 
 // Admin – delete
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, requirePermission('gallery', 'delete'), async (req, res) => {
   try {
     await Gallery.findByIdAndDelete(req.params.id);
     res.json({ message: 'Deleted' });

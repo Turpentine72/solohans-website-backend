@@ -1,6 +1,6 @@
 import express from 'express';
 import Settings from '../models/Settings.js';
-import { protect } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -24,7 +24,7 @@ router.get('/', async (req, res) => {
 
 // ✅ GET full settings (includes Paystack secret key) – admin only.
 // Used by the admin Settings page to populate the edit form.
-router.get('/admin', protect, async (req, res) => {
+router.get('/admin', protect, requirePermission('settings', 'view'), async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) {
@@ -37,7 +37,7 @@ router.get('/admin', protect, async (req, res) => {
 });
 
 // ✅ PUT (update) settings – already admin only (unchanged)
-router.put('/', protect, async (req, res) => {
+router.put('/', protect, requirePermission('settings', 'edit'), async (req, res) => {
   try {
     let settings = await Settings.findOne();
     if (!settings) {

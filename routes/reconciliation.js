@@ -2,14 +2,14 @@ import express from 'express';
 import MenuItem from '../models/MenuItem.js';
 import DailyStock from '../models/DailyStock.js';
 import Reconciliation from '../models/Reconciliation.js';
-import { protect, requireRole } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
 import { getOrCreateTodayStock } from '../utils/stockDeduction.js';
 
 const router = express.Router();
 
 // admin + closing_staff can perform end-of-day reconciliation
-router.use(protect, requireRole('admin', 'closing_staff'));
+router.use(protect, requirePermission('reconciliation', 'view'));
 
 // ─── GET expected stock for today (what the system thinks remains) ───────
 router.get('/expected', async (req, res) => {
@@ -22,7 +22,7 @@ router.get('/expected', async (req, res) => {
 });
 
 // ─── Close the day: compare actual counts vs expected, lock, reset ────────
-router.post('/close-day', async (req, res) => {
+router.post('/close-day', requirePermission('reconciliation', 'create'), async (req, res) => {
   try {
     const { actualCounts } = req.body; // [{ menuItemId, actual }]
     if (!Array.isArray(actualCounts)) {

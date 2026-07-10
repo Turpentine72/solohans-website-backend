@@ -1,13 +1,13 @@
 // backend/routes/dashboard.js
 import express from 'express';
-import { protect, requireRole } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 import Order from '../models/Order.js';
 import Inventory from '../models/Inventory.js';
 import { inventorySnapshot } from '../utils/stockEngine.js';
 import { getIngredientReport } from '../utils/ingredientEngine.js';
 
 const router = express.Router();
-router.use(protect, requireRole('admin', 'storekeeper', 'cashier'));
+router.use(protect, requirePermission('dashboard', 'view'));
 
 function rangeStart(period) {
   const now = new Date();

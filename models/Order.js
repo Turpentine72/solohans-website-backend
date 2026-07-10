@@ -61,7 +61,7 @@ const orderSchema = new mongoose.Schema({
   taggedStaffName: { type: String, default: '' },
   taggedShiftId: { type: mongoose.Schema.Types.ObjectId, ref: 'Attendance', default: null },
   taggedAt: { type: Date, default: null },
-  paymentMethod: { type: String, enum: ['CASH', 'TRANSFER', 'POS', 'SPLIT', 'WEBSITE PAYMENT'], default: 'WEBSITE PAYMENT' },
+  paymentMethod: { type: String, enum: ['CASH', 'TRANSFER', 'POS', 'SPLIT', 'WEBSITE PAYMENT', 'PLATFORM'], default: 'WEBSITE PAYMENT' },
   // ✅ Split Payment — only populated when paymentMethod === 'SPLIT'. Each
   // entry's amount is in ₦, and the entries must sum to exactly totalAmount
   // (enforced server-side in checkout.js, not just trusted from the client).

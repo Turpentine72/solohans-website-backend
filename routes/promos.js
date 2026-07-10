@@ -1,6 +1,6 @@
 import express from 'express';
 import Promo from '../models/Promo.js';
-import { protect } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -18,7 +18,7 @@ router.get('/active', async (req, res) => {
 });
 
 // Admin – get all promos
-router.get('/', protect, async (req, res) => {
+router.get('/', protect, requirePermission('promotions', 'view'), async (req, res) => {
   const promos = await Promo.find()
     .populate('triggerItems freeItem applicableItems')
     .sort('-createdAt');
@@ -26,7 +26,7 @@ router.get('/', protect, async (req, res) => {
 });
 
 // Create
-router.post('/', protect, async (req, res) => {
+router.post('/', protect, requirePermission('promotions', 'create'), async (req, res) => {
   try {
     const promo = await Promo.create(req.body);
     res.status(201).json(promo);
@@ -36,7 +36,7 @@ router.post('/', protect, async (req, res) => {
 });
 
 // Update
-router.put('/:id', protect, async (req, res) => {
+router.put('/:id', protect, requirePermission('promotions', 'edit'), async (req, res) => {
   try {
     const promo = await Promo.findByIdAndUpdate(req.params.id, req.body, { new: true });
     res.json(promo);
@@ -46,7 +46,7 @@ router.put('/:id', protect, async (req, res) => {
 });
 
 // Toggle active
-router.patch('/:id/toggle', protect, async (req, res) => {
+router.patch('/:id/toggle', protect, requirePermission('promotions', 'edit'), async (req, res) => {
   const promo = await Promo.findById(req.params.id);
   promo.active = !promo.active;
   await promo.save();
@@ -54,7 +54,7 @@ router.patch('/:id/toggle', protect, async (req, res) => {
 });
 
 // Delete
-router.delete('/:id', protect, async (req, res) => {
+router.delete('/:id', protect, requirePermission('promotions', 'delete'), async (req, res) => {
   await Promo.findByIdAndDelete(req.params.id);
   res.json({ message: 'Deleted' });
 });

@@ -1,6 +1,6 @@
 // backend/routes/pos.js
 import express from 'express';
-import { protect, requireRole } from '../middleware/auth.js';
+import { protect, requirePermission } from '../middleware/auth.js';
 import { createOrderFromCheckout, CheckoutError } from '../utils/checkout.js';
 import { priceOrder, PricingError } from '../utils/pricing.js';
 import { assertStockAvailable, StockError } from '../utils/stockEngine.js';
@@ -10,7 +10,7 @@ import { sendPushToAdmins } from '../utils/push.js';
 
 const router = express.Router();
 
-router.use(protect, requireRole('admin', 'storekeeper', 'cashier'));
+router.use(protect, requirePermission('pos', 'view'));
 
 // ─── LIVE PRICE PREVIEW (no stock mutation) ──────────────────────
 router.post('/quote', async (req, res) => {
@@ -38,7 +38,7 @@ router.post('/quote', async (req, res) => {
 
 // ─── COMPLETE SALE (store checkout) ──────────────────────────────
 // body: { cart: { mealPackages, extras }, paymentMethod, customerName, phone }
-router.post('/checkout', async (req, res) => {
+router.post('/checkout', requirePermission('pos', 'create'), async (req, res) => {
   try {
     const { cart, paymentMethod, customerName, phone, posSaleType, splitPayments, platform, externalOrderId, discountAmount, discountLabel } = req.body;
     // ✅ Never take staff identity from the request body — always the
