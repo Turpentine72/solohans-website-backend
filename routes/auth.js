@@ -7,6 +7,7 @@ import Otp from '../models/Otp.js';
 import { sendBrandedEmail, sendPasswordChangeAlertToAdmin } from '../utils/emailTemplates.js'; // ✅ branded emails
 import { protect } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 
 const router = express.Router();
 
@@ -19,7 +20,7 @@ const signToken = (user) =>
   );
 
 // ─── Login ────────────────────────────────────────────────────────────────────
-router.post('/login', async (req, res) => {
+router.post('/login', rateLimit({ max: 10, windowMs: 15 * 60 * 1000, message: 'Too many login attempts. Please wait 15 minutes and try again.' }), async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email: email.toLowerCase().trim() });
@@ -61,7 +62,7 @@ router.post('/register', async (req, res) => {
 });
 
 // ─── Forgot Password (send OTP) ──────────────────────────────────────────────
-router.post('/forgot-password', async (req, res) => {
+router.post('/forgot-password', rateLimit({ max: 5, windowMs: 15 * 60 * 1000, message: 'Too many password reset requests. Please wait 15 minutes and try again.' }), async (req, res) => {
   try {
     const { email } = req.body;
     const user = await User.findOne({ email: email.toLowerCase().trim() });
@@ -105,7 +106,7 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 // ─── Reset Password (verify OTP + set new password) ──────────────────────────
-router.post('/reset-password', async (req, res) => {
+router.post('/reset-password', rateLimit({ max: 10, windowMs: 15 * 60 * 1000, message: 'Too many attempts. Please wait 15 minutes and try again.' }), async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body;
     if (!email || !otp || !newPassword) {
@@ -249,7 +250,7 @@ router.post('/change-password/resend', protect, async (req, res) => {
 });
 
 // ─── Change Password — Step 2: verify OTP and apply the change ───────────────
-router.post('/change-password/verify', protect, async (req, res) => {
+router.post('/change-password/verify', protect, rateLimit({ max: 10, windowMs: 15 * 60 * 1000, message: 'Too many attempts. Please wait 15 minutes and try again.' }), async (req, res) => {
   try {
     const { otp } = req.body;
     const user = await User.findById(req.user.id);

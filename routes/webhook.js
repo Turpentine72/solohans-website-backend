@@ -18,7 +18,12 @@ router.post("/", express.json(), async (req, res) => {
       .update(JSON.stringify(req.body))
       .digest("hex");
 
-    if (hash !== req.headers["x-paystack-signature"]) {
+    const providedSignature = req.headers["x-paystack-signature"] || "";
+    const signaturesMatch =
+      hash.length === providedSignature.length &&
+      crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(providedSignature));
+
+    if (!signaturesMatch) {
       return res.status(400).send("Invalid signature");
     }
 

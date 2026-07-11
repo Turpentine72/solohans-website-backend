@@ -36,8 +36,14 @@ import ingredientRoutes from './routes/ingredients.js';
 import backupRoutes from './routes/backup.route.js';
 import { maybeRunScheduledBackup } from './utils/backupEngine.js';
 
-
 const app = express();
+
+// ✅ This app runs behind a reverse proxy (Render). Without this, Express's
+// req.ip returns the proxy's internal address for every single request —
+// identical for every user — which would make IP-based rate limiting
+// either useless (never triggers) or actively harmful (one shared bucket
+// across every user, so unrelated users get locked out together).
+app.set('trust proxy', 1);
 
 // ─────────────────────────────────────────────────────────
 // Middleware
