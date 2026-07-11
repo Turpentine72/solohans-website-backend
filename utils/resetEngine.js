@@ -6,7 +6,7 @@ import Notification from '../models/Notification.js';
 import AuditLog from '../models/AuditLog.js';
 import Otp from '../models/Otp.js';
 import Counter from '../models/Counter.js';
-import Backup from '../models/Backup.js';
+import Backup from '../models/Backup.model.js';
 import { createBackup } from './backupEngine.js';
 
 export class ResetError extends Error {}
