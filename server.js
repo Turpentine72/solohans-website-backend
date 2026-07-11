@@ -33,7 +33,7 @@ import posRoutes from './routes/pos.js';
 import dashboardRoutes from './routes/dashboard.js';
 import paymentReconciliationRoutes from './routes/paymentReconciliation.js';
 import ingredientRoutes from './routes/ingredients.js';
-import backupRoutes from './routes/backup.js';
+import backupRoutes from './routes/backup.route.js';
 import resetRoutes from './routes/reset.js';
 import { maybeRunScheduledBackup } from './utils/backupEngine.js';
 
