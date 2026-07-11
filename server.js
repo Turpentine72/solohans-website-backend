@@ -33,7 +33,8 @@ import posRoutes from './routes/pos.js';
 import dashboardRoutes from './routes/dashboard.js';
 import paymentReconciliationRoutes from './routes/paymentReconciliation.js';
 import ingredientRoutes from './routes/ingredients.js';
-import backupRoutes from './routes/backup.route.js';
+import backupRoutes from './routes/backup.js';
+import resetRoutes from './routes/reset.js';
 import { maybeRunScheduledBackup } from './utils/backupEngine.js';
 
 const app = express();
@@ -109,6 +110,8 @@ app.use('/api/payment-reconciliation', paymentReconciliationRoutes);
 app.use('/api/ingredients', ingredientRoutes);
 app.use('/api/backup', backupRoutes);
 console.log('[startup] registered route: /api/backup');
+app.use('/api/reset', resetRoutes);
+console.log('[startup] registered route: /api/reset');
 
 // ─────────────────────────────────────────────────────────
 // Health Check
