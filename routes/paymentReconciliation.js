@@ -4,12 +4,16 @@ import mongoose from 'mongoose';
 import { protect, requirePermission } from '../middleware/auth.js';
 import Order from '../models/Order.js';
 
-const platformEntrySchema = new mongoose.Schema({ expected: Number, actual: Number, variance: Number }, { _id: false });
+const platformEntrySchema = new mongoose.Schema({ expected: Number, actual: Number, variance: Number, count: Number }, { _id: false });
 
 const dailyCloseSchema = new mongoose.Schema({
   date: { type: String, required: true, unique: true }, // YYYY-MM-DD
   expected: {
-    cashTotal: Number, transferTotal: Number, posTotal: Number, websitePaymentTotal: Number, totalSales: Number,
+    cashTotal: Number, cashCount: Number,
+    transferTotal: Number, transferCount: Number,
+    posTotal: Number, posCount: Number,
+    websitePaymentTotal: Number, websitePaymentCount: Number,
+    totalSales: Number,
   },
   actual: {
     cashTotal: Number, transferTotal: Number, posTotal: Number, websitePaymentTotal: Number,
@@ -37,17 +41,32 @@ function todayKey() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// Every third-party platform the POS supports — kept in sync with
+// checkout.js's VALID_PLATFORMS (minus 'Walk-in', which isn't a platform).
+// Always shown here, even at ₦0/0 transactions, so a platform never
+// silently disappears from the reconciliation view just because it had
+// no sales yet today — and so this list is the one place to extend when
+// a new platform is added, matching the "no core logic changes" design.
+const RECONCILABLE_PLATFORMS = ['Glovo', 'Chowdeck', 'Uber Eats', 'Other'];
+
 async function expectedTotalsForToday() {
   const since = new Date();
   since.setHours(0, 0, 0, 0);
   const orders = await Order.find({ isDeleted: false, payment_status: 'paid', createdAt: { $gte: since } });
 
-  const expected = { cashTotal: 0, transferTotal: 0, posTotal: 0, websitePaymentTotal: 0, platformTotal: 0, platformBreakdown: {} };
+  const expected = {
+    cashTotal: 0, cashCount: 0,
+    transferTotal: 0, transferCount: 0,
+    posTotal: 0, posCount: 0,
+    websitePaymentTotal: 0, websitePaymentCount: 0,
+    platformTotal: 0,
+    platformBreakdown: Object.fromEntries(RECONCILABLE_PLATFORMS.map((p) => [p, { total: 0, count: 0 }])),
+  };
   orders.forEach((o) => {
-    if (o.paymentMethod === 'CASH') expected.cashTotal += o.totalAmount || 0;
-    else if (o.paymentMethod === 'TRANSFER') expected.transferTotal += o.totalAmount || 0;
-    else if (o.paymentMethod === 'POS') expected.posTotal += o.totalAmount || 0;
-    else if (o.paymentMethod === 'WEBSITE PAYMENT') expected.websitePaymentTotal += o.totalAmount || 0;
+    if (o.paymentMethod === 'CASH') { expected.cashTotal += o.totalAmount || 0; expected.cashCount += 1; }
+    else if (o.paymentMethod === 'TRANSFER') { expected.transferTotal += o.totalAmount || 0; expected.transferCount += 1; }
+    else if (o.paymentMethod === 'POS') { expected.posTotal += o.totalAmount || 0; expected.posCount += 1; }
+    else if (o.paymentMethod === 'WEBSITE PAYMENT') { expected.websitePaymentTotal += o.totalAmount || 0; expected.websitePaymentCount += 1; }
     else if (o.paymentMethod === 'PLATFORM') {
       // ✅ Third-party platform orders (Glovo, Chowdeck, etc.) — payment
       // was already collected by the platform, so there's nothing to
@@ -56,14 +75,15 @@ async function expectedTotalsForToday() {
       // invisible from the day's closing report — just not mixed into
       // cash/transfer/POS reconciliation math where it doesn't belong.
       expected.platformTotal += o.totalAmount || 0;
-      const key = o.platform || 'Other';
-      expected.platformBreakdown[key] = (expected.platformBreakdown[key] || 0) + (o.totalAmount || 0);
+      const key = RECONCILABLE_PLATFORMS.includes(o.platform) ? o.platform : 'Other';
+      expected.platformBreakdown[key].total += o.totalAmount || 0;
+      expected.platformBreakdown[key].count += 1;
     }
     else if (o.paymentMethod === 'SPLIT') {
       (o.splitPayments || []).forEach((sp) => {
-        if (sp.method === 'CASH') expected.cashTotal += sp.amount || 0;
-        else if (sp.method === 'TRANSFER') expected.transferTotal += sp.amount || 0;
-        else if (sp.method === 'POS') expected.posTotal += sp.amount || 0;
+        if (sp.method === 'CASH') { expected.cashTotal += sp.amount || 0; expected.cashCount += 1; }
+        else if (sp.method === 'TRANSFER') { expected.transferTotal += sp.amount || 0; expected.transferCount += 1; }
+        else if (sp.method === 'POS') { expected.posTotal += sp.amount || 0; expected.posCount += 1; }
       });
     }
   });
@@ -109,9 +129,9 @@ router.post('/close-day', requirePermission('payment_reconciliation', 'create'),
     // a platform under/over-paying versus what was rung up at POS.
     const actualPlatforms = req.body.actualCounts?.platformBreakdown || {};
     const platformBreakdown = {};
-    for (const [platform, expectedAmount] of Object.entries(expected.platformBreakdown || {})) {
+    for (const [platform, data] of Object.entries(expected.platformBreakdown || {})) {
       const actualAmount = Number(actualPlatforms[platform]) || 0;
-      platformBreakdown[platform] = { expected: expectedAmount, actual: actualAmount, variance: actualAmount - expectedAmount };
+      platformBreakdown[platform] = { expected: data.total, actual: actualAmount, variance: actualAmount - data.total, count: data.count };
     }
 
     const record = await PaymentDailyClose.create({
