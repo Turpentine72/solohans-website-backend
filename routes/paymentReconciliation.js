@@ -4,6 +4,8 @@ import mongoose from 'mongoose';
 import { protect, requirePermission } from '../middleware/auth.js';
 import Order from '../models/Order.js';
 
+const platformEntrySchema = new mongoose.Schema({ expected: Number, actual: Number, variance: Number }, { _id: false });
+
 const dailyCloseSchema = new mongoose.Schema({
   date: { type: String, required: true, unique: true }, // YYYY-MM-DD
   expected: {
@@ -15,6 +17,12 @@ const dailyCloseSchema = new mongoose.Schema({
   variance: {
     cashTotal: Number, transferTotal: Number, posTotal: Number, websitePaymentTotal: Number,
   },
+  // ✅ Third-party delivery platforms — Glovo, Chowdeck, Uber Eats, Other,
+  // and anything added in the future. A Map keyed by platform name means a
+  // brand-new platform just works here automatically, no schema change
+  // needed, matching the same "no core logic changes" design as the POS
+  // platform-order feature itself.
+  platformBreakdown: { type: Map, of: platformEntrySchema, default: () => ({}) },
   closedBy: { type: String, default: '' },
 }, { timestamps: true });
 
@@ -95,8 +103,19 @@ router.post('/close-day', requirePermission('payment_reconciliation', 'create'),
       websitePaymentTotal: actual.websitePaymentTotal - expected.websitePaymentTotal,
     };
 
+    // ✅ One row per platform actually seen today (Glovo, Chowdeck, Uber
+    // Eats, Other, or anything added later) — "actual" here means what the
+    // platform's own dashboard/settlement statement shows, so this catches
+    // a platform under/over-paying versus what was rung up at POS.
+    const actualPlatforms = req.body.actualCounts?.platformBreakdown || {};
+    const platformBreakdown = {};
+    for (const [platform, expectedAmount] of Object.entries(expected.platformBreakdown || {})) {
+      const actualAmount = Number(actualPlatforms[platform]) || 0;
+      platformBreakdown[platform] = { expected: expectedAmount, actual: actualAmount, variance: actualAmount - expectedAmount };
+    }
+
     const record = await PaymentDailyClose.create({
-      date, expected, actual, variance, closedBy: req.user?.email || 'admin',
+      date, expected, actual, variance, platformBreakdown, closedBy: req.user?.email || 'admin',
     });
 
     res.status(201).json(record);
