@@ -1,7 +1,7 @@
 import express from 'express';
 import { protect } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
-import { performGlobalReset } from '../utils/resetEngine.js';
+import { performGlobalReset, ResetError } from '../utils/resetEngine.js';
 
 const router = express.Router();
 router.use(protect);
@@ -41,7 +41,11 @@ router.post('/transactional-data', async (req, res) => {
 
     res.json({ message: 'Global reset complete.', safetyBackupId: safetyBackup._id, results });
   } catch (err) {
-    console.error('❌ [global-reset] Failed:', err);
+    if (err instanceof ResetError) {
+      console.error(`❌ [global-reset] ${err.message}`);
+      return res.status(500).json({ message: err.message });
+    }
+    console.error('❌ [global-reset] Unexpected failure:', err);
     res.status(500).json({ message: `Reset failed: ${err.message || 'unknown error — check server logs.'}` });
   }
 });

@@ -39,40 +39,62 @@ export async function performGlobalReset({ performedBy = 'system' } = {}) {
   // 🛟 Safety net — always snapshot everything before wiping anything,
   // exactly like Restore does. This is the one thing that does NOT get
   // deleted afterward, so a Global Reset can always be undone.
-  const safetyBackup = await createBackup({ type: 'pre-reset-safety', createdBy: performedBy });
+  //
+  // This step is deliberately isolated: if it fails for ANY reason
+  // (validation error, DB write failure, GridFS issue), the function
+  // throws right here, before a single wipe has run — no data is deleted
+  // if the safety backup can't be created.
+  let safetyBackup;
+  try {
+    safetyBackup = await createBackup({ type: 'pre-reset-safety', createdBy: performedBy });
+  } catch (err) {
+    throw new ResetError(`Safety backup failed, so the reset was stopped before touching any data: ${err.message}`);
+  }
 
   const results = {};
-
   const wipe = async (Model, label) => {
     const { deletedCount } = await Model.deleteMany({});
     results[label] = deletedCount;
   };
 
-  await wipe(Order, 'orders');
-  await wipe(Reconciliation, 'reconciliations');
-  const PaymentDailyClose = mongoose.models.PaymentDailyClose;
-  if (PaymentDailyClose) {
-    const { deletedCount } = await PaymentDailyClose.deleteMany({});
-    results.paymentReconciliations = deletedCount;
-  }
-  await wipe(Notification, 'notifications');
-  await wipe(Otp, 'otps');
-  await wipe(AuditLog, 'auditLogs');
+  // From here on, the safety backup already exists — if any individual
+  // wipe step fails, results/error make clear exactly how far it got, so
+  // this is never a silent partial state.
+  try {
+    await wipe(Order, 'orders');
+    await wipe(Reconciliation, 'reconciliations');
+    const PaymentDailyClose = mongoose.models.PaymentDailyClose;
+    if (PaymentDailyClose) {
+      const { deletedCount } = await PaymentDailyClose.deleteMany({});
+      results.paymentReconciliations = deletedCount;
+    }
+    await wipe(Notification, 'notifications');
+    await wipe(Otp, 'otps');
+    await wipe(AuditLog, 'auditLogs');
 
-  // Old backup history — everything except the safety snapshot just taken.
-  const oldBackups = await Backup.find({ _id: { $ne: safetyBackup._id } });
-  const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'backups' });
-  for (const b of oldBackups) {
-    try { await bucket.delete(b.fileId); } catch { /* file may already be gone — fine */ }
-  }
-  const { deletedCount: backupsDeleted } = await Backup.deleteMany({ _id: { $ne: safetyBackup._id } });
-  results.oldBackupsCleared = backupsDeleted;
+    // Old backup history — everything except the safety snapshot just taken.
+    const oldBackups = await Backup.find({ _id: { $ne: safetyBackup._id } });
+    const bucket = new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'backups' });
+    for (const b of oldBackups) {
+      try { await bucket.delete(b.fileId); } catch { /* file may already be gone — fine */ }
+    }
+    const { deletedCount: backupsDeleted } = await Backup.deleteMany({ _id: { $ne: safetyBackup._id } });
+    results.oldBackupsCleared = backupsDeleted;
 
-  // Fresh invoice numbering — INV-000001 restarts from the top. (order_id
-  // isn't Counter-driven — it's a date+random string, so there's no
-  // sequence to reset there.)
-  await Counter.deleteOne({ _id: 'invoiceNumber' });
-  results.invoiceCounterReset = true;
+    // Fresh invoice numbering — INV-000001 restarts from the top. (order_id
+    // isn't Counter-driven — it's a date+random string, so there's no
+    // sequence to reset there.)
+    await Counter.deleteOne({ _id: 'invoiceNumber' });
+    results.invoiceCounterReset = true;
+  } catch (err) {
+    // A step failed partway through. The safety backup exists and can
+    // restore everything — surface exactly what was cleared before the
+    // failure so this is diagnosable, not a silent mystery.
+    throw new ResetError(
+      `Reset stopped partway through — some data may have been cleared before this failed: ${JSON.stringify(results)}. ` +
+      `A safety backup ("${safetyBackup.filename}") was taken first and can restore everything via Backup & Restore. Underlying error: ${err.message}`
+    );
+  }
 
   return { safetyBackup, results };
 }

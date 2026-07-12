@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 const backupSchema = new mongoose.Schema({
-  type: { type: String, enum: ['manual', 'scheduled', 'pre-restore-safety'], default: 'manual' },
+  type: { type: String, enum: ['manual', 'scheduled', 'pre-restore-safety', 'pre-reset-safety'], default: 'manual' },
   frequency: { type: String, enum: ['daily', 'weekly', 'monthly', null], default: null },
   createdBy: { type: String, default: 'system' },
   fileId: { type: mongoose.Schema.Types.ObjectId, required: true }, // GridFS file id

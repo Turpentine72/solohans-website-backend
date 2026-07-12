@@ -69,9 +69,17 @@ export async function createBackup({ type = 'manual', frequency = null, createdB
   const data = {};
   const counts = {};
   for (const [key, Model] of Object.entries(COLLECTIONS)) {
-    const docs = await Model.find().lean();
-    data[key] = docs;
-    counts[key] = docs.length;
+    // ⚠️ Deliberately NOT .lean() here. Map-typed fields (e.g.
+    // Role.permissions) come back from .lean() as actual JS Map
+    // instances, which JSON.stringify silently serializes to "{}" —
+    // meaning every backup would silently lose all role permission data
+    // without this. toObject({ flattenMaps: true }) converts every Map
+    // field to a plain object first, so it survives JSON serialization
+    // (and restore) correctly.
+    const docs = await Model.find();
+    const plain = docs.map((d) => d.toObject({ flattenMaps: true }));
+    data[key] = plain;
+    counts[key] = plain.length;
   }
 
   const payload = JSON.stringify({ createdAt: new Date().toISOString(), collections: Object.keys(COLLECTIONS), data });
