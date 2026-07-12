@@ -347,6 +347,57 @@ router.get('/', protect, requirePermission('orders', 'view'), async (req, res) =
 // Lists pending online orders that any logged-in staff member can claim.
 // Must be registered BEFORE '/:id' below, or Express would treat
 // "website-pending" as an :id and this would never be reached.
+// ─── UNIFIED ORDER HISTORY ────────────────────────────────────────
+// The master history for every completed order, regardless of where it
+// came from. Deliberately reads straight from the same Order collection
+// everything else uses — no separate/duplicated history table. Default
+// range is today; date/source/payment narrows the DB query itself (so a
+// months-old business doesn't have to pull its whole order history every
+// time), while search/grouping happens on the frontend within that
+// window, same pattern as Reports and Expenses.
+function deriveOrderSource(order) {
+  if (order.platform && order.platform !== 'Walk-in') return order.platform; // Glovo, Chowdeck, Uber Eats, Other
+  if (order.order_type === 'store') return 'POS';
+  if (order.order_channel === 'whatsapp') return 'WhatsApp';
+  return 'Website';
+}
+
+router.get('/history/unified', protect, requirePermission('orders', 'view'), async (req, res) => {
+  try {
+    const { dateFrom, dateTo, source, paymentMethod } = req.query;
+
+    const query = { isDeleted: { $ne: true }, payment_status: 'paid' };
+
+    if (dateFrom || dateTo) {
+      query.createdAt = {};
+      if (dateFrom) query.createdAt.$gte = new Date(`${dateFrom}T00:00:00`);
+      if (dateTo) query.createdAt.$lte = new Date(`${dateTo}T23:59:59`);
+    } else {
+      // Default: today only, matching the spec's "Default view: Today's
+      // Order History" — the frontend can widen this via dateFrom/dateTo.
+      const start = new Date(); start.setHours(0, 0, 0, 0);
+      query.createdAt = { $gte: start };
+    }
+
+    if (paymentMethod) query.paymentMethod = paymentMethod;
+
+    // Source maps to underlying fields since it isn't stored directly.
+    if (source === 'POS') { query.order_type = 'store'; query.platform = 'Walk-in'; }
+    else if (source === 'WhatsApp') { query.order_channel = 'whatsapp'; query.platform = 'Walk-in'; }
+    else if (source === 'Website') { query.order_type = { $ne: 'store' }; query.order_channel = 'online'; query.platform = 'Walk-in'; }
+    else if (['Glovo', 'Chowdeck', 'Uber Eats', 'Other'].includes(source)) { query.platform = source; }
+
+    const orders = await Order.find(query).sort({ createdAt: -1 }).limit(2000);
+
+    const withSource = orders.map((o) => ({ ...o.toObject(), _source: deriveOrderSource(o) }));
+
+    res.json(withSource);
+  } catch (err) {
+    console.error('❌ [orders/history] Failed to load order history:', err);
+    res.status(500).json({ message: `Couldn't load Order History: ${err.message}` });
+  }
+});
+
 router.get('/website-pending', protect, requirePermission('orders', 'view'), async (req, res) => {
   try {
     const orders = await Order.find({
