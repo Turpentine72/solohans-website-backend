@@ -18,6 +18,8 @@ import { assertIngredientsAvailable, deductIngredientsForOrder, IngredientStockE
 import { getActiveShift, ShiftError } from '../utils/shiftHelper.js';
 import { archiveOldCompletedOrders } from '../utils/autoArchive.js';
 import { createOrderFromCheckout, CheckoutError } from '../utils/checkout.js';
+import { logAudit } from '../utils/auditLog.js';
+import AuditLog from '../models/AuditLog.js';
 import { PricingError } from '../utils/pricing.js';
 import { StockError } from '../utils/stockEngine.js';
 // ❌ removed: import getNextSequence from '../utils/getNextSequence.js';
@@ -133,6 +135,32 @@ router.get('/receipt/:id', async (req, res) => {
     res.json(order);
   } catch (err) {
     res.status(404).json({ message: 'Receipt not found' });
+  }
+});
+
+// ─── Track a staff member printing/reprinting a receipt ──────────────
+// Deliberately separate from the public /receipt/:id route — a customer
+// opening their own receipt link isn't "staff activity"; only calls from
+// the authenticated admin UI (POS, Orders, Order History) count.
+router.post('/:id/track-print', protect, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    const isReprint = order.receiptPrintCount > 0;
+    order.receiptPrintCount += 1;
+    await order.save();
+
+    logAudit({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      action: isReprint ? 'Receipt Reprinted' : 'Receipt Printed',
+      details: `Order #${order.order_id}`,
+    });
+
+    res.json({ receiptPrintCount: order.receiptPrintCount });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
@@ -395,6 +423,30 @@ router.get('/history/unified', protect, requirePermission('orders', 'view'), asy
   } catch (err) {
     console.error('❌ [orders/history] Failed to load order history:', err);
     res.status(500).json({ message: `Couldn't load Order History: ${err.message}` });
+  }
+});
+
+// ─── Track a receipt print/reprint (staff only — customers viewing their
+// own receipt link don't have a staff session, so this silently no-ops
+// for them since `protect` will reject the request) ──────────────────
+router.post('/:id/log-receipt-print', protect, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id).select('order_id');
+    if (!order) return res.status(404).json({ message: 'Order not found' });
+
+    const priorPrint = await AuditLog.findOne({ action: { $in: ['Receipt Printed', 'Receipt Reprinted'] }, details: { $regex: order.order_id } });
+    const action = priorPrint ? 'Receipt Reprinted' : 'Receipt Printed';
+
+    logAudit({
+      userId: req.user.id,
+      userEmail: req.user.email,
+      action,
+      details: `${action} for order ${order.order_id}`,
+    });
+
+    res.json({ message: action });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 

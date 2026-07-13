@@ -35,6 +35,7 @@ import paymentReconciliationRoutes from './routes/paymentReconciliation.js';
 import ingredientRoutes from './routes/ingredients.js';
 import backupRoutes from './routes/backup.route.js';
 import resetRoutes from './routes/reset.route.js';
+import staffActivityRoutes from './routes/staffActivity.route.js';
 import { maybeRunScheduledBackup } from './utils/backupEngine.js';
 
 const app = express();
@@ -112,14 +113,34 @@ app.use('/api/backup', backupRoutes);
 console.log('[startup] registered route: /api/backup');
 app.use('/api/reset', resetRoutes);
 console.log('[startup] registered route: /api/reset');
+app.use('/api/staff-activity', staffActivityRoutes);
+console.log('[startup] registered route: /api/staff-activity');
 
 // ─────────────────────────────────────────────────────────
-// Health Check
+// Health Check — also lists every route actually registered on this
+// running instance. Visit this URL directly in a browser after deploying
+// to instantly confirm whether a given route made it into the deploy,
+// instead of guessing or digging through log output.
 // ─────────────────────────────────────────────────────────
+function listRegisteredRoutes() {
+  const routes = [];
+  app._router.stack.forEach((layer) => {
+    if (layer.name === 'router' && layer.regexp) {
+      const match = layer.regexp.source.match(/^\^\\\/(.+?)\\\/\?/);
+      const base = match ? `/${match[1].replace(/\\\//g, '/')}` : null;
+      if (base) routes.push(base);
+    } else if (layer.route) {
+      routes.push(layer.route.path);
+    }
+  });
+  return routes;
+}
+
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
     message: 'Solohans backend is running',
+    registeredRoutes: listRegisteredRoutes(),
   });
 });
 
@@ -135,6 +156,7 @@ mongoose
 
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
+      console.log('📋 Registered routes:', listRegisteredRoutes().join(', '));
     });
 
     // ✅ Automatic Backup — checked hourly, actually runs only when the
