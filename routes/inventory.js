@@ -1,154 +1,172 @@
-// backend/routes/paymentReconciliation.js
+// backend/routes/inventory.js
 import express from 'express';
-import mongoose from 'mongoose';
 import { protect, requirePermission } from '../middleware/auth.js';
-import Order from '../models/Order.js';
-
-const platformEntrySchema = new mongoose.Schema({ expected: Number, actual: Number, variance: Number, count: Number }, { _id: false });
-
-const dailyCloseSchema = new mongoose.Schema({
-  date: { type: String, required: true, unique: true }, // YYYY-MM-DD
-  expected: {
-    cashTotal: Number, cashCount: Number,
-    transferTotal: Number, transferCount: Number,
-    posTotal: Number, posCount: Number,
-    websitePaymentTotal: Number, websitePaymentCount: Number,
-    totalSales: Number,
-  },
-  actual: {
-    cashTotal: Number, transferTotal: Number, posTotal: Number, websitePaymentTotal: Number,
-  },
-  variance: {
-    cashTotal: Number, transferTotal: Number, posTotal: Number, websitePaymentTotal: Number,
-  },
-  // ✅ Third-party delivery platforms — Glovo, Chowdeck, Uber Eats, Other,
-  // and anything added in the future. A Map keyed by platform name means a
-  // brand-new platform just works here automatically, no schema change
-  // needed, matching the same "no core logic changes" design as the POS
-  // platform-order feature itself.
-  platformBreakdown: { type: Map, of: platformEntrySchema, default: () => ({}) },
-  closedBy: { type: String, default: '' },
-}, { timestamps: true });
-
-const PaymentDailyClose = mongoose.models.PaymentDailyClose || mongoose.model('PaymentDailyClose', dailyCloseSchema);
+import Inventory from '../models/Inventory.js';
+import StockMovement from '../models/StockMovement.js';
+import { restock, resetStock, deleteExtra, inventorySnapshot, StockError } from '../utils/stockEngine.js';
+import { logAudit } from '../utils/auditLog.js';
 
 const router = express.Router();
 
-router.use(protect, requirePermission('payment_reconciliation', 'view'));
-
-function todayKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-// Every third-party platform the POS supports — kept in sync with
-// checkout.js's VALID_PLATFORMS (minus 'Walk-in', which isn't a platform).
-// Always shown here, even at ₦0/0 transactions, so a platform never
-// silently disappears from the reconciliation view just because it had
-// no sales yet today — and so this list is the one place to extend when
-// a new platform is added, matching the "no core logic changes" design.
-const RECONCILABLE_PLATFORMS = ['Glovo', 'Chowdeck', 'Uber Eats', 'Other'];
-
-async function expectedTotalsForToday() {
-  const since = new Date();
-  since.setHours(0, 0, 0, 0);
-  const orders = await Order.find({ isDeleted: false, payment_status: 'paid', createdAt: { $gte: since } });
-
-  const expected = {
-    cashTotal: 0, cashCount: 0,
-    transferTotal: 0, transferCount: 0,
-    posTotal: 0, posCount: 0,
-    websitePaymentTotal: 0, websitePaymentCount: 0,
-    platformTotal: 0,
-    platformBreakdown: Object.fromEntries(RECONCILABLE_PLATFORMS.map((p) => [p, { total: 0, count: 0 }])),
-  };
-  orders.forEach((o) => {
-    if (o.paymentMethod === 'CASH') { expected.cashTotal += o.totalAmount || 0; expected.cashCount += 1; }
-    else if (o.paymentMethod === 'TRANSFER') { expected.transferTotal += o.totalAmount || 0; expected.transferCount += 1; }
-    else if (o.paymentMethod === 'POS') { expected.posTotal += o.totalAmount || 0; expected.posCount += 1; }
-    else if (o.paymentMethod === 'WEBSITE PAYMENT') { expected.websitePaymentTotal += o.totalAmount || 0; expected.websitePaymentCount += 1; }
-    else if (o.paymentMethod === 'PLATFORM') {
-      // ✅ Third-party platform orders (Glovo, Chowdeck, etc.) — payment
-      // was already collected by the platform, so there's nothing to
-      // reconcile in the cash drawer for these. Still shown as its own
-      // visible line, broken down by platform, so this revenue is never
-      // invisible from the day's closing report — just not mixed into
-      // cash/transfer/POS reconciliation math where it doesn't belong.
-      expected.platformTotal += o.totalAmount || 0;
-      const key = RECONCILABLE_PLATFORMS.includes(o.platform) ? o.platform : 'Other';
-      expected.platformBreakdown[key].total += o.totalAmount || 0;
-      expected.platformBreakdown[key].count += 1;
-    }
-    else if (o.paymentMethod === 'SPLIT') {
-      (o.splitPayments || []).forEach((sp) => {
-        if (sp.method === 'CASH') { expected.cashTotal += sp.amount || 0; expected.cashCount += 1; }
-        else if (sp.method === 'TRANSFER') { expected.transferTotal += sp.amount || 0; expected.transferCount += 1; }
-        else if (sp.method === 'POS') { expected.posTotal += sp.amount || 0; expected.posCount += 1; }
-      });
-    }
-  });
-  expected.totalSales = expected.cashTotal + expected.transferTotal + expected.posTotal + expected.websitePaymentTotal + expected.platformTotal;
-  return expected;
-}
-
-// ─── GET expected totals for today ────────────────────────────────
-router.get('/expected', async (req, res) => {
+// ─── PUBLIC: extras catalog for the customer-facing website ──────
+// Deliberately unauthenticated (customers browsing the site aren't logged
+// in) and deliberately minimal — only what's needed to show/price extras
+// on the public "Build Your Meal" page, not the full admin inventory
+// snapshot (lifetime totals, thresholds, etc). This is what makes the
+// public site read from the SAME live Meal Inventory data as POS/admin,
+// instead of a separate hardcoded catalog.
+router.get('/public-extras', async (req, res) => {
   try {
-    const expected = await expectedTotalsForToday();
-    const existing = await PaymentDailyClose.findOne({ date: todayKey() });
-    res.json({ date: todayKey(), expected, isClosed: !!existing, closedRecord: existing || null });
+    const inv = await Inventory.getSingleton();
+    const catalog = {};
+    for (const [key, entry] of inv.extras.entries()) {
+      catalog[key] = { label: entry.label, price: entry.price, remaining: Math.max(0, entry.totalAdded - entry.sold) };
+    }
+    res.json(catalog);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// ─── POST close the day with staff-counted actual amounts ────────
-router.post('/close-day', requirePermission('payment_reconciliation', 'create'), async (req, res) => {
+router.use(protect, requirePermission('meal_inventory', 'view'));
+
+// ─── GET current inventory snapshot ─────────────────────────────
+router.get('/', async (req, res) => {
   try {
-    const date = todayKey();
-    const existing = await PaymentDailyClose.findOne({ date });
-    if (existing) return res.status(400).json({ message: 'Today has already been reconciled and closed.' });
+    const inv = await Inventory.getSingleton();
+    res.json(inventorySnapshot(inv));
+  } catch (err) {
+    console.error('❌ [inventory] Failed to load inventory snapshot:', err);
+    res.status(500).json({ message: `Couldn't load Meal Inventory: ${err.message}` });
+  }
+});
 
-    const expected = await expectedTotalsForToday();
-    const actual = {
-      cashTotal: Number(req.body.actualCounts?.cashTotal) || 0,
-      transferTotal: Number(req.body.actualCounts?.transferTotal) || 0,
-      posTotal: Number(req.body.actualCounts?.posTotal) || 0,
-      websitePaymentTotal: Number(req.body.actualCounts?.websitePaymentTotal) || 0,
-    };
-    const variance = {
-      cashTotal: actual.cashTotal - expected.cashTotal,
-      transferTotal: actual.transferTotal - expected.transferTotal,
-      posTotal: actual.posTotal - expected.posTotal,
-      websitePaymentTotal: actual.websitePaymentTotal - expected.websitePaymentTotal,
-    };
-
-    // ✅ One row per platform actually seen today (Glovo, Chowdeck, Uber
-    // Eats, Other, or anything added later) — "actual" here means what the
-    // platform's own dashboard/settlement statement shows, so this catches
-    // a platform under/over-paying versus what was rung up at POS.
-    const actualPlatforms = req.body.actualCounts?.platformBreakdown || {};
-    const platformBreakdown = {};
-    for (const [platform, data] of Object.entries(expected.platformBreakdown || {})) {
-      const actualAmount = Number(actualPlatforms[platform]) || 0;
-      platformBreakdown[platform] = { expected: data.total, actual: actualAmount, variance: actualAmount - data.total, count: data.count };
-    }
-
-    const record = await PaymentDailyClose.create({
-      date, expected, actual, variance, platformBreakdown, closedBy: req.user?.email || 'admin',
+// ─── PATCH low stock threshold ───────────────────────────────────
+router.patch('/threshold', requirePermission('meal_inventory', 'manage'), async (req, res) => {
+  try {
+    const inv = await Inventory.getSingleton();
+    const previous = inv.lowStockThreshold;
+    inv.lowStockThreshold = Number(req.body.lowStockThreshold) || inv.lowStockThreshold;
+    await inv.save();
+    logAudit({
+      userId: req.user.id, userEmail: req.user.email,
+      action: 'Low Stock Threshold Changed',
+      details: `Changed from ${previous} to ${inv.lowStockThreshold}`,
     });
-
-    res.status(201).json(record);
+    res.json(inventorySnapshot(inv));
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
 });
 
-// ─── GET history ──────────────────────────────────────────────────
+// ─── POST restock an item ────────────────────────────────────────
+// body: { item: 'jollof' | 'friedRice' | 'spaghettiPlastics' | 'lunchBoxes' | 'extraPlastics' | 'extras:plantain', quantity, reason }
+router.post('/restock', requirePermission('meal_inventory', 'manage'), async (req, res) => {
+  try {
+    const { item, quantity, reason } = req.body;
+    const performedBy = req.user?.email || req.user?.id || 'admin';
+    const inv = await restock(item, quantity, { reason, performedBy });
+    res.json(inventorySnapshot(inv));
+  } catch (err) {
+    if (err instanceof StockError) return res.status(400).json({ message: err.message });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ─── PATCH update an extra item's price/label ───────────────────
+router.patch('/extras/:key', requirePermission('meal_inventory', 'edit'), async (req, res) => {
+  try {
+    const inv = await Inventory.getSingleton();
+    const entry = inv.extras.get(req.params.key);
+    if (!entry) return res.status(404).json({ message: 'Extra item not found' });
+    const previousPrice = entry.price;
+    if (req.body.price !== undefined) entry.price = Number(req.body.price);
+    if (req.body.label !== undefined) entry.label = req.body.label;
+    inv.extras.set(req.params.key, entry);
+    await inv.save();
+    logAudit({
+      userId: req.user.id, userEmail: req.user.email,
+      action: 'Extra Item Edited',
+      details: `Edited "${entry.label}"${req.body.price !== undefined ? ` — price: ₦${previousPrice} → ₦${entry.price}` : ''}`,
+    });
+    res.json(inventorySnapshot(inv));
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+// ─── POST create a new extra item type ───────────────────────────
+router.post('/extras', requirePermission('meal_inventory', 'create'), async (req, res) => {
+  try {
+    const { key, label, price, usesPlastic } = req.body;
+    if (!key || !label) return res.status(400).json({ message: 'key and label are required' });
+    const inv = await Inventory.getSingleton();
+    if (inv.extras.get(key)) return res.status(400).json({ message: 'Extra item already exists' });
+    inv.extras.set(key, { label, price: Number(price) || 0, usesPlastic: !!usesPlastic, totalAdded: 0, sold: 0 });
+    await inv.save();
+    logAudit({
+      userId: req.user.id, userEmail: req.user.email,
+      action: 'Extra Item Created',
+      details: `Created "${label}" at ₦${Number(price) || 0}`,
+    });
+    res.status(201).json(inventorySnapshot(inv));
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+// ─── POST reset an item's stock to an exact counted value ────────
+// body: { item, newRemaining, reason }. Never touches lifetime 'sold'
+// history — only corrects the current remaining count.
+router.post('/reset', requirePermission('meal_inventory', 'manage'), async (req, res) => {
+  try {
+    const { item, newRemaining, reason } = req.body;
+    const performedBy = req.user?.email || req.user?.id || 'admin';
+    const inv = await resetStock(item, newRemaining, { reason, performedBy });
+    logAudit({
+      userId: req.user.id, userEmail: req.user.email,
+      action: 'Stock Reset',
+      details: `Reset "${item}" to ${newRemaining}${reason ? ` — ${reason}` : ''}`,
+    });
+    res.json(inventorySnapshot(inv));
+  } catch (err) {
+    if (err instanceof StockError) return res.status(400).json({ message: err.message });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ─── DELETE an extra item type — Super Admin only ─────────────────
+// Deletion of any inventory record is restricted to Super Admin
+// specifically (not just anyone with meal_inventory:delete), since it's
+// permanent and the item must already be reset to 0 stock first.
+router.delete('/extras/:key', (req, res, next) => {
+  if (!req.user?.isSuperAdmin) {
+    return res.status(403).json({ message: 'Only a Super Admin can permanently delete an inventory item.' });
+  }
+  next();
+}, async (req, res) => {
+  try {
+    const performedBy = req.user?.email || 'admin';
+    await deleteExtra(req.params.key, { reason: req.body?.reason, performedBy });
+    logAudit({
+      userId: req.user.id, userEmail: req.user.email,
+      action: 'Extra Item Deleted',
+      details: `Permanently deleted extra item "${req.params.key}"`,
+    });
+    const inv = await Inventory.getSingleton();
+    res.json(inventorySnapshot(inv));
+  } catch (err) {
+    if (err instanceof StockError) return res.status(400).json({ message: err.message });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ─── GET stock movement history ──────────────────────────────────
 router.get('/history', async (req, res) => {
   try {
-    const records = await PaymentDailyClose.find().sort({ date: -1 }).limit(90);
-    res.json(records);
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const movements = await StockMovement.find().sort({ createdAt: -1 }).limit(limit);
+    res.json(movements);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
