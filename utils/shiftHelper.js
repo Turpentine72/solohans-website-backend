@@ -34,6 +34,38 @@ export async function requireActiveShift(userId) {
 }
 
 /**
+ * Activity-only summary for a shift — deliberately NO sales/payment
+ * figures (that's what Order History and Payment Reconciliation are for
+ * now). Just counts of what the staff member actually did during this
+ * shift: orders processed, inventory changes made, expenses logged.
+ */
+export async function getShiftActivitySummary(record) {
+  const Expense = (await import('../models/Expense.js')).default;
+  const AuditLog = (await import('../models/AuditLog.js')).default;
+
+  const posOrders = await Order.countDocuments({ shiftId: record._id, source: 'store', isDeleted: false });
+  const taggedOrders = await Order.countDocuments({ taggedShiftId: record._id, isDeleted: false });
+
+  const windowEnd = record.checkOut || new Date();
+  const expensesAdded = record.checkIn
+    ? await Expense.countDocuments({ addedBy: record.user, createdAt: { $gte: record.checkIn, $lte: windowEnd } })
+    : 0;
+  const inventoryUpdates = record.checkIn
+    ? await AuditLog.countDocuments({
+        user: record.user,
+        timestamp: { $gte: record.checkIn, $lte: windowEnd },
+        action: { $regex: /Ingredient|Extra Item|Stock Reset|Menu Item/i },
+      })
+    : 0;
+
+  return {
+    ordersProcessed: posOrders + taggedOrders,
+    expensesAdded,
+    inventoryUpdates,
+  };
+}
+
+/**
  * Computes a full shift summary — used for the live Staff Dashboard (while
  * the shift is still Active) and the final summary shown on End Work.
  * Combines two independent things happening in one shift:

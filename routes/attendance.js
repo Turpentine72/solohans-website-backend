@@ -2,7 +2,7 @@ import express from 'express';
 import Attendance from '../models/Attendance.js';
 import { protect, requirePermission } from '../middleware/auth.js';
 import { logAudit } from '../utils/auditLog.js';
-import { getShiftSummary } from '../utils/shiftHelper.js';
+import { getShiftSummary, getShiftActivitySummary } from '../utils/shiftHelper.js';
 
 const router = express.Router();
 
@@ -103,7 +103,7 @@ router.post('/check-out', protect, async (req, res) => {
 // ─── Admin: Staff History with filters ──────────────────────────────────────
 router.get('/history', protect, requirePermission('staff_history', 'view'), async (req, res) => {
   try {
-    const { date, role, status, staffId, paymentMethod } = req.query;
+    const { date, role, status, staffId } = req.query;
     const filter = {};
     if (date) {
       const start = new Date(date);
@@ -118,26 +118,16 @@ router.get('/history', protect, requirePermission('staff_history', 'view'), asyn
 
     const records = await Attendance.find(filter).sort('-date').limit(500);
 
-    // ✅ Admin reports: sales by staff, by payment method, website orders
-    // handled per staff, and active/completed shifts — all derived from the
-    // same per-shift summary used on the staff's own dashboard, so the
-    // numbers can never disagree between the two views.
-    const withSummary = await Promise.all(records.map(async (r) => {
-      const summary = await getShiftSummary(r._id);
-      return { ...r.toObject(), summary };
+    // ✅ Staff History is strictly an activity log now — Order History
+    // and Payment Reconciliation own sales/payment reporting. This shows
+    // what each staff member DID during their shift, not how much money
+    // moved through it.
+    const withActivity = await Promise.all(records.map(async (r) => {
+      const activity = await getShiftActivitySummary(r);
+      return { ...r.toObject(), activity };
     }));
 
-    const filtered = paymentMethod
-      ? withSummary.filter((r) => {
-          if (paymentMethod === 'CASH') return r.summary.cashSales > 0;
-          if (paymentMethod === 'TRANSFER') return r.summary.transferSales > 0;
-          if (paymentMethod === 'POS') return r.summary.posCardSales > 0;
-          if (paymentMethod === 'WEBSITE') return r.summary.websiteOrdersTaggedTotal > 0;
-          return true;
-        })
-      : withSummary;
-
-    res.json(filtered);
+    res.json(withActivity);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

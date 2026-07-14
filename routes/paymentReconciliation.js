@@ -27,6 +27,10 @@ const dailyCloseSchema = new mongoose.Schema({
   // needed, matching the same "no core logic changes" design as the POS
   // platform-order feature itself.
   platformBreakdown: { type: Map, of: platformEntrySchema, default: () => ({}) },
+  // ✅ Optional notes explaining any variance — one map covering every
+  // channel (cash/transfer/pos/websitePayment plus any platform name),
+  // so this works the same way regardless of how many platforms exist.
+  notes: { type: Map, of: String, default: () => ({}) },
   closedBy: { type: String, default: '' },
 }, { timestamps: true });
 
@@ -135,7 +139,7 @@ router.post('/close-day', requirePermission('payment_reconciliation', 'create'),
     }
 
     const record = await PaymentDailyClose.create({
-      date, expected, actual, variance, platformBreakdown, closedBy: req.user?.email || 'admin',
+      date, expected, actual, variance, platformBreakdown, notes: req.body.notes || {}, closedBy: req.user?.email || 'admin',
     });
 
     res.status(201).json(record);
