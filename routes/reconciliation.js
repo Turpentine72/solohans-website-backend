@@ -1,3 +1,15 @@
+// backend/routes/reconciliation.js
+//
+// DAY RECONCILIATION — FOOD / MEALS ONLY.
+// Completely separate from routes/paymentReconciliation.js (which handles
+// MONEY reconciliation). This page never touches cash, POS totals,
+// transfers, or any payment method — only how many meals/portions were
+// sold today, per dish.
+//
+// The expected number of meals sold per dish is calculated automatically
+// from all of today's completed orders and sales. Staff only type in the
+// actual portion count they counted at close of day — every comparison
+// and every difference is calculated by the system.
 import express from 'express';
 import MenuItem from '../models/MenuItem.js';
 import DailyStock from '../models/DailyStock.js';
@@ -11,20 +23,30 @@ const router = express.Router();
 // admin + closing_staff can perform end-of-day reconciliation
 router.use(protect, requirePermission('reconciliation', 'view'));
 
-// ─── GET expected stock for today (what the system thinks remains) ───────
+function statusFor(difference) {
+  if (difference === 0) return 'Reconciled';
+  return difference > 0 ? 'Excess' : 'Shortage';
+}
+
+// ─── GET expected meals sold for today (auto-calculated, food only) ──────
 router.get('/expected', async (req, res) => {
   try {
     const stock = await getOrCreateTodayStock();
-    res.json(stock);
+    const items = stock.items.map((i) => ({
+      menuItem: i.menuItem,
+      name: i.name,
+      expectedSold: i.sold,
+    }));
+    res.json({ date: stock.date, items, isClosed: stock.isClosed });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// ─── Close the day: compare actual counts vs expected, lock, reset ────────
+// ─── Close the day: compare actual meal counts vs expected, lock, reset ──
 router.post('/close-day', requirePermission('reconciliation', 'create'), async (req, res) => {
   try {
-    const { actualCounts } = req.body; // [{ menuItemId, actual }]
+    const { actualCounts } = req.body; // [{ menuItemId, actual }] — actual meals/portions sold, counted by staff
     if (!Array.isArray(actualCounts)) {
       return res.status(400).json({ message: 'actualCounts array is required' });
     }
@@ -41,17 +63,18 @@ router.post('/close-day', requirePermission('reconciliation', 'create'), async (
       const submitted = actualCounts.find(
         a => String(a.menuItemId) === String(stockEntry.menuItem)
       );
-      const expected = stockEntry.remaining;
-      const actual = submitted ? Number(submitted.actual) || 0 : 0;
-      const difference = actual - expected;
+      const expectedSold = stockEntry.sold;
+      const actualSold = submitted ? Number(submitted.actual) || 0 : 0;
+      const difference = actualSold - expectedSold;
       if (difference !== 0) hasMismatch = true;
 
       items.push({
         menuItem: stockEntry.menuItem,
         name: stockEntry.name,
-        expectedStock: expected,
-        actualStock: actual,
+        expectedSold,
+        actualSold,
         difference,
+        status: statusFor(difference),
       });
     }
 
@@ -73,7 +96,7 @@ router.post('/close-day', requirePermission('reconciliation', 'create'), async (
       userId: req.user.id,
       userEmail: req.user.email,
       action: 'Day Closed',
-      details: `Closed day with status "${reconciliation.status}" — ${items.length} item(s) reconciled`,
+      details: `Closed day (food reconciliation) with status "${reconciliation.status}" — ${items.length} item(s) reconciled`,
     });
 
     res.json(reconciliation);
