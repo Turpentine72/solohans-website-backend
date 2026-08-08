@@ -8,6 +8,14 @@ const menuItemSchema = new mongoose.Schema({
   image: { type: String, default: '' },
   available: { type: Boolean, default: true },
   signature: { type: Boolean, default: false },
+  // ✅ Daily Dish Stock — tracking the number of FINISHED DISHES/PORTIONS
+  // available for sale today. Completely separate from Meal Inventory
+  // (rice/spaghetti/boxes) and Ingredient Inventory (raw ingredients).
+  // Explicit opt-in per item: only dishes with trackDailyStock === true
+  // are gated by remaining/openingStock — every other menu item (drinks,
+  // sides, anything not meant to have a daily portion cap) keeps working
+  // exactly as before, unaffected by this flag defaulting to false.
+  trackDailyStock: { type: Boolean, default: false },
   // ✅ Daily stock tracking — reset to 0 each day when a day is closed via reconciliation
   openingStock: { type: Number, default: 0 },
   sold: { type: Number, default: 0 },

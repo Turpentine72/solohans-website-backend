@@ -34,8 +34,9 @@ router.post('/opening', protect, requirePermission('daily_stock', 'manage'), asy
       });
     }
 
-    // Rebuild today's snapshot from the values just set
-    const menuItems = await MenuItem.find();
+    // Rebuild today's snapshot from the values just set — only dishes
+    // explicitly opted into Daily Dish Stock tracking appear here.
+    const menuItems = await MenuItem.find({ trackDailyStock: true });
     const DailyStock = (await import('../models/DailyStock.js')).default;
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);

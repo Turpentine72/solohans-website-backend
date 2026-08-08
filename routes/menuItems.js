@@ -10,6 +10,7 @@ router.get('/', async (req, res) => {
     const query = {};
     if (req.query.available !== undefined) query.available = req.query.available === 'true';
     if (req.query.signature !== undefined) query.signature = req.query.signature === 'true';
+    if (req.query.trackDailyStock !== undefined) query.trackDailyStock = req.query.trackDailyStock === 'true';
     let q = MenuItem.find(query).sort({ createdAt: -1 });
     if (req.query.limit) q = q.limit(Number(req.query.limit));
     res.json(await q);

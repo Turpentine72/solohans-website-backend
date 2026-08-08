@@ -7,6 +7,7 @@ import MenuItem from '../models/MenuItem.js';
 import { priceOrder, PricingError } from './pricing.js';
 import { deductStockForOrder } from './stockEngine.js';
 import { assertIngredientsAvailable, deductIngredientsForOrder } from './ingredientEngine.js';
+import { assertDishStockAvailable, deductDishStockForOrder, DishStockError } from './dishStockEngine.js';
 import { requireActiveShift, ShiftError } from './shiftHelper.js';
 
 export class CheckoutError extends Error {}
@@ -175,6 +176,18 @@ export async function createOrderFromCheckout({
   }
   if (resolvedMenuItems.length) {
     await assertIngredientsAvailable(resolvedMenuItems); // throws "Insufficient X Stock." if short
+    // ✅ Daily Dish Stock — blocks checkout if a dish opted into daily
+    // portion tracking (e.g. Regular Chicken, Big Turkey) doesn't have
+    // enough remaining stock for today. Covers POS sales and the website
+    // combo-builder checkout alike, since both flow through here. Rethrown
+    // as CheckoutError so both /orders/checkout and /pos/checkout surface
+    // it the same way they already surface every other checkout failure.
+    try {
+      await assertDishStockAvailable(resolvedMenuItems);
+    } catch (err) {
+      if (err instanceof DishStockError) throw new CheckoutError(err.message);
+      throw err;
+    }
   }
   const menuItemsTotal = resolvedMenuItems.reduce((sum, { menuItem, quantity }) => sum + menuItem.price * quantity, 0);
 
@@ -276,10 +289,11 @@ export async function createOrderFromCheckout({
     // separately by routes/payments.js once Paystack confirms the charge.
     verification_status: isStoreSale ? 'Verified' : 'Not Verified',
     // These orders are deducted from the shared Inventory system (rice
-    // scoops / spaghetti plastics / lunch boxes) immediately below — NOT
-    // via the old MenuItem-based deductStockForOrder() that runs on first
-    // admin approval. Marking this true prevents that legacy path from
-    // ever double-processing (or erroring on) a combo order's items.
+    // scoops / spaghetti plastics / lunch boxes) AND Daily Dish Stock
+    // (for any menuItems lines) immediately below — NOT via the old
+    // order-status-based deductStockForOrder() in stockDeduction.js, which
+    // only ever ran on first admin approval. Marking this true prevents
+    // that legacy path from ever double-processing this order's items.
     stockDeducted: true,
   });
 
@@ -287,6 +301,16 @@ export async function createOrderFromCheckout({
   await deductStockForOrder(priced, { orderId: order._id, performedBy: staffName || paymentMethod });
   if (resolvedMenuItems.length) {
     await deductIngredientsForOrder(resolvedMenuItems, { orderId: order._id, performedBy: staffName || paymentMethod });
+    // ✅ Reduce each dish's Daily Dish Stock (remaining/sold) the instant
+    // this sale/order is committed — covers POS ("Complete Sale") and the
+    // website combo-builder checkout. Cart-add time never reaches this
+    // code path, so stock is never touched just for browsing/building a cart.
+    try {
+      await deductDishStockForOrder(resolvedMenuItems, { orderId: order._id, performedBy: staffName || paymentMethod });
+    } catch (err) {
+      if (err instanceof DishStockError) throw new CheckoutError(err.message);
+      throw err;
+    }
   }
 
   try {
